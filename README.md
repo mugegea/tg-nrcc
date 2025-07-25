@@ -14,7 +14,7 @@
 ### 2. 下载并进入项目目录
 ```bash
 git clone https://github.com/mugegea/tg-nrcc.git
-cd tg-nrcc/tg-nrcc-backup
+cd tg-nrcc
 ```
 
 ### 3. 运行一键安装脚本
