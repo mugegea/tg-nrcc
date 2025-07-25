@@ -33,6 +33,9 @@ bash install.sh
   - `CHANNEL_ID`：你的频道ID，必须以 `-100` 开头，可用 [@userinfobot](https://t.me/userinfobot) 查询。
   - `BOT_USERNAME`：你的机器人用户名，不带 @。
 
+     nano storage/admin_ids.json  如何让自己成为管理员
+
+
 ### 5. 测试启动机器人
 ```bash
 python3 -m bot.main
