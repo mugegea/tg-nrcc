@@ -10,6 +10,7 @@ from telegram import InputMediaPhoto, InputMediaVideo
 import uuid
 BIND_CHANNELS_PATH = os.path.join(os.path.dirname(__file__), '..', 'storage', 'bind_channels.json')
 FORCE_FOLLOW_PATH = os.path.join(os.path.dirname(__file__), '..', 'storage', 'force_follow.json')
+FOLLOW_STATS_PATH = os.path.join(os.path.dirname(__file__), '..', 'storage', 'follow_stats.json')
 
 def add_bound_channel(channel_id):
     channels = get_bound_channels()
@@ -51,6 +52,45 @@ async def check_user_in_channel(bot, user_id, channel_id):
     except Exception as e:
         print(f"检查用户频道状态失败: {e}")
         return False
+
+def get_follow_stats():
+    """获取关注统计数据"""
+    if os.path.exists(FOLLOW_STATS_PATH):
+        with open(FOLLOW_STATS_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {"total_follows": 0, "today_follows": 0, "last_reset_date": "", "follow_records": []}
+
+def save_follow_stats(stats):
+    """保存关注统计数据"""
+    with open(FOLLOW_STATS_PATH, 'w', encoding='utf-8') as f:
+        json.dump(stats, f, ensure_ascii=False, indent=2)
+
+def record_follow(user_id, username=None):
+    """记录用户关注"""
+    stats = get_follow_stats()
+    today = datetime.now().strftime("%Y-%m-%d")
+    
+    # 检查是否今天第一次重置
+    if stats["last_reset_date"] != today:
+        stats["today_follows"] = 0
+        stats["last_reset_date"] = today
+    
+    # 检查用户是否已经记录过
+    user_record = {
+        "user_id": user_id,
+        "username": username,
+        "timestamp": datetime.now().isoformat()
+    }
+    
+    # 检查是否是新用户
+    existing_user = any(record["user_id"] == user_id for record in stats["follow_records"])
+    if not existing_user:
+        stats["total_follows"] += 1
+        stats["today_follows"] += 1
+        stats["follow_records"].append(user_record)
+        save_follow_stats(stats)
+        return True
+    return False
 
 # 读取介绍内容
 def get_intro():
@@ -231,6 +271,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 if is_member:
                     # 已关注，发送内容
+                    # 记录关注统计
+                    user = await context.bot.get_chat(query.from_user.id)
+                    username = user.username if hasattr(user, 'username') and user.username else None
+                    is_new_follow = record_follow(query.from_user.id, username)
+                    
                     await restore_group_to_user(group, context.bot, query.message.chat_id)
                     await query.edit_message_text("✅ 内容已发送！")
                 else:
@@ -615,7 +660,7 @@ async def forcefollow_handler(update, context):
         return
     
     if not context.args:
-        await update.message.reply_text("用法：\n/forcefollow on - 开启强制关注\n/forcefollow off - 关闭强制关注\n/forcefollow set <频道ID> - 设置频道\n/forcefollow show - 显示状态")
+        await update.message.reply_text("用法：\n/forcefollow on - 开启强制关注\n/forcefollow off - 关闭强制关注\n/forcefollow set <频道ID> - 设置频道\n/forcefollow show - 显示状态\n/forcefollow stats - 查看关注统计\n/forcefollow reset - 重置统计数据")
         return
     
     action = context.args[0].lower()
@@ -659,8 +704,30 @@ async def forcefollow_handler(update, context):
         channel_info = f"{config['channel_username']} ({config['channel_id']})" if config["channel_id"] else "未设置"
         await update.message.reply_text(f"📊 强制关注设置状态：\n\n状态：{status}\n频道：{channel_info}")
         
+    elif action == "stats":
+        stats = get_follow_stats()
+        await update.message.reply_text(
+            f"📈 关注统计报告\n\n"
+            f"总关注人数：{stats['total_follows']} 人\n"
+            f"今日关注：{stats['today_follows']} 人\n"
+            f"最后更新：{stats['last_reset_date'] or '无数据'}\n\n"
+            f"💡 统计说明：\n"
+            f"• 只统计通过强制关注检查的用户\n"
+            f"• 每个用户只统计一次\n"
+            f"• 每日自动重置今日数据"
+        )
+        
+    elif action == "reset":
+        stats = get_follow_stats()
+        stats["total_follows"] = 0
+        stats["today_follows"] = 0
+        stats["follow_records"] = []
+        stats["last_reset_date"] = ""
+        save_follow_stats(stats)
+        await update.message.reply_text("✅ 统计数据已重置！")
+        
     else:
-        await update.message.reply_text("用法：\n/forcefollow on - 开启强制关注\n/forcefollow off - 关闭强制关注\n/forcefollow set <频道ID> - 设置频道\n/forcefollow show - 显示状态")
+        await update.message.reply_text("用法：\n/forcefollow on - 开启强制关注\n/forcefollow off - 关闭强制关注\n/forcefollow set <频道ID> - 设置频道\n/forcefollow show - 显示状态\n/forcefollow stats - 查看关注统计\n/forcefollow reset - 重置统计数据")
 
 def register_handlers(application):
     application.add_handler(CommandHandler("start", start_handler))
