@@ -63,5 +63,5 @@ async def save_group_to_channel(messages, bot):
 
 def generate_link(group_id):
     bot_username = os.getenv("BOT_USERNAME")
-    # 使用 text 参数，让用户点击后直接发送内容
-    return f"https://t.me/{bot_username}?start={group_id}&text=获取内容" 
+    # 使用 start 参数，让用户点击后直接打开机器人
+    return f"https://t.me/{bot_username}?start={group_id}" 
