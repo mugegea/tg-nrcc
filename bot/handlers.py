@@ -93,6 +93,8 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         group = get_group_by_id(payload)
         if group:
             await restore_group_to_user(group, context.bot, update.effective_chat.id)
+            # 自动发送确认消息
+            await update.message.reply_text("✅ 内容已发送！")
         else:
             await update.message.reply_text("资源未找到或链接已失效。")
     else:
