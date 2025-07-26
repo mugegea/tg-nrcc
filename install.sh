@@ -36,12 +36,13 @@ pip3 install -r requirements.txt
 # 4. 初始化 storage 目录
 print_info "初始化 storage 目录..."
 mkdir -p storage
-touch storage/admin_ids.json storage/bind_channels.json storage/backup_channels.json storage/bind_channel.txt storage/intro.txt
-echo "[]" > storage/admin_ids.json
-echo "[]" > storage/bind_channels.json
-echo "[]" > storage/backup_channels.json
-echo "" > storage/bind_channel.txt
-echo "这是一个资源管理机器人，支持任意内容合并分享。" > storage/intro.txt
+       touch storage/admin_ids.json storage/bind_channels.json storage/backup_channels.json storage/bind_channel.txt storage/intro.txt storage/force_follow.json
+       echo "[]" > storage/admin_ids.json
+       echo "[]" > storage/bind_channels.json
+       echo "[]" > storage/backup_channels.json
+       echo "" > storage/bind_channel.txt
+       echo "这是一个资源管理机器人，支持任意内容合并分享。" > storage/intro.txt
+       echo '{"enabled": false, "channel_id": "", "channel_username": ""}' > storage/force_follow.json
 
 print_success "storage 目录初始化完成！"
 
