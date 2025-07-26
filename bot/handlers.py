@@ -9,6 +9,7 @@ INTRO_PATH = os.path.join(os.path.dirname(__file__), '..', 'storage', 'intro.txt
 from telegram import InputMediaPhoto, InputMediaVideo
 import uuid
 BIND_CHANNELS_PATH = os.path.join(os.path.dirname(__file__), '..', 'storage', 'bind_channels.json')
+FORCE_FOLLOW_PATH = os.path.join(os.path.dirname(__file__), '..', 'storage', 'force_follow.json')
 
 def add_bound_channel(channel_id):
     channels = get_bound_channels()
@@ -31,6 +32,25 @@ def get_bound_channels():
     # 兼容老逻辑，首次用.env
     env_id = os.getenv("CHANNEL_ID")
     return [env_id] if env_id else []
+
+def get_force_follow_config():
+    if os.path.exists(FORCE_FOLLOW_PATH):
+        with open(FORCE_FOLLOW_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {"enabled": False, "channel_id": "", "channel_username": ""}
+
+def save_force_follow_config(config):
+    with open(FORCE_FOLLOW_PATH, 'w', encoding='utf-8') as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+
+async def check_user_in_channel(bot, user_id, channel_id):
+    """检查用户是否在指定频道中"""
+    try:
+        member = await bot.get_chat_member(chat_id=channel_id, user_id=user_id)
+        return member.status in ['member', 'administrator', 'creator']
+    except Exception as e:
+        print(f"检查用户频道状态失败: {e}")
+        return False
 
 # 读取介绍内容
 def get_intro():
@@ -92,6 +112,28 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if payload:
         group = get_group_by_id(payload)
         if group:
+            # 检查强制关注设置
+            force_config = get_force_follow_config()
+            if force_config["enabled"] and force_config["channel_id"]:
+                user_id = update.effective_user.id
+                is_member = await check_user_in_channel(context.bot, user_id, force_config["channel_id"])
+                
+                if not is_member:
+                    # 用户未关注，显示关注提示
+                    channel_link = f"https://t.me/{force_config['channel_username']}" if force_config['channel_username'] else f"https://t.me/c/{force_config['channel_id'][4:]}/1"
+                    keyboard = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📢 关注频道", url=channel_link)],
+                        [InlineKeyboardButton("🔄 重新检查", callback_data=f"check_follow_{payload}")]
+                    ])
+                    await update.message.reply_text(
+                        f"⚠️ 请先关注频道才能获取内容！\n\n"
+                        f"频道：{force_config['channel_username'] or force_config['channel_id']}\n\n"
+                        f"关注后请点击下方按钮重新检查。",
+                        reply_markup=keyboard
+                    )
+                    return
+            
+            # 通过检查，发送内容
             await restore_group_to_user(group, context.bot, update.effective_chat.id)
             # 自动发送确认消息
             await update.message.reply_text("✅ 内容已发送！")
@@ -176,6 +218,30 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
     elif query.data == "admin_manage":
         await query.edit_message_text("管理员管理：\n请发送 /addadmin <Telegram用户ID> 来添加管理员。\n只有管理员可用。")
+        await query.answer()
+    elif query.data.startswith("check_follow_"):
+        # 处理重新检查关注状态
+        payload = query.data.replace("check_follow_", "")
+        group = get_group_by_id(payload)
+        if group:
+            force_config = get_force_follow_config()
+            if force_config["enabled"] and force_config["channel_id"]:
+                user_id = query.from_user.id
+                is_member = await check_user_in_channel(context.bot, user_id, force_config["channel_id"])
+                
+                if is_member:
+                    # 已关注，发送内容
+                    await restore_group_to_user(group, context.bot, query.message.chat_id)
+                    await query.edit_message_text("✅ 内容已发送！")
+                else:
+                    # 仍未关注
+                    await query.answer("❌ 您仍未关注频道，请先关注后再试！", show_alert=True)
+            else:
+                # 功能已关闭，直接发送
+                await restore_group_to_user(group, context.bot, query.message.chat_id)
+                await query.edit_message_text("✅ 内容已发送！")
+        else:
+            await query.edit_message_text("❌ 内容未找到或已失效！")
         await query.answer()
 
 
@@ -531,6 +597,7 @@ COMMAND_DESCRIPTIONS = {
     '/addbackupchannel': '添加备用频道（仅管理员）',
     '/rmbackupchannel': '移除备用频道（仅管理员）',
     '/listbackupchannels': '列出所有备用频道',
+    '/forcefollow': '强制关注频道管理（仅管理员）',
     '/qbzhiling': '显示所有机器人指令及其描述',
 }
 
@@ -539,6 +606,61 @@ async def qbzhiling_handler(update, context):
     for cmd, desc in COMMAND_DESCRIPTIONS.items():
         text += f'{cmd} - {desc}\n'
     await update.message.reply_text(text)
+
+async def forcefollow_handler(update, context):
+    user_id = update.effective_user.id
+    admin_ids = load_admin_ids()
+    if user_id not in admin_ids:
+        await update.message.reply_text("无权限，仅管理员可用。")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("用法：\n/forcefollow on - 开启强制关注\n/forcefollow off - 关闭强制关注\n/forcefollow set <频道ID> - 设置频道\n/forcefollow show - 显示状态")
+        return
+    
+    action = context.args[0].lower()
+    config = get_force_follow_config()
+    
+    if action == "on":
+        if not config["channel_id"]:
+            await update.message.reply_text("❌ 请先设置频道ID！\n用法：/forcefollow set <频道ID>")
+            return
+        config["enabled"] = True
+        save_force_follow_config(config)
+        await update.message.reply_text("✅ 强制关注功能已开启！")
+        
+    elif action == "off":
+        config["enabled"] = False
+        save_force_follow_config(config)
+        await update.message.reply_text("✅ 强制关注功能已关闭！")
+        
+    elif action == "set":
+        if len(context.args) < 2:
+            await update.message.reply_text("用法：/forcefollow set <频道ID>\n如：/forcefollow set -100xxxxxxxxxx")
+            return
+        
+        channel_id = context.args[1]
+        if not channel_id.startswith('-100'):
+            await update.message.reply_text("❌ 频道ID必须以 -100 开头！")
+            return
+        
+        # 尝试获取频道信息
+        try:
+            chat = await context.bot.get_chat(channel_id)
+            config["channel_id"] = channel_id
+            config["channel_username"] = chat.username or ""
+            save_force_follow_config(config)
+            await update.message.reply_text(f"✅ 强制关注频道已设置：\n频道：{chat.title}\nID：{channel_id}")
+        except Exception as e:
+            await update.message.reply_text(f"❌ 设置失败：{str(e)}\n请确保机器人是频道管理员！")
+            
+    elif action == "show":
+        status = "开启" if config["enabled"] else "关闭"
+        channel_info = f"{config['channel_username']} ({config['channel_id']})" if config["channel_id"] else "未设置"
+        await update.message.reply_text(f"📊 强制关注设置状态：\n\n状态：{status}\n频道：{channel_info}")
+        
+    else:
+        await update.message.reply_text("用法：\n/forcefollow on - 开启强制关注\n/forcefollow off - 关闭强制关注\n/forcefollow set <频道ID> - 设置频道\n/forcefollow show - 显示状态")
 
 def register_handlers(application):
     application.add_handler(CommandHandler("start", start_handler))
@@ -553,9 +675,10 @@ def register_handlers(application):
     application.add_handler(CommandHandler("addbackupchannel", addbackupchannel_handler))
     application.add_handler(CommandHandler("rmbackupchannel", rmbackupchannel_handler))
     application.add_handler(CommandHandler("listbackupchannels", listbackupchannels_handler))
+    application.add_handler(CommandHandler("forcefollow", forcefollow_handler))
     application.add_handler(CommandHandler("qbzhiling", qbzhiling_handler))
     application.add_handler(MessageHandler(filters.ALL, content_handler))
     application.add_handler(CallbackQueryHandler(finish_handler, pattern="^finish$"))
     application.add_handler(CallbackQueryHandler(audit_handler, pattern="^(approve_|reject_).*$"))
     application.add_handler(CallbackQueryHandler(cancel_handler, pattern="^cancel$"))
-    application.add_handler(CallbackQueryHandler(button_handler, pattern="^(help|start|admin_manage)$")) 
+    application.add_handler(CallbackQueryHandler(button_handler, pattern="^(help|start|admin_manage|check_follow_).*$")) 
