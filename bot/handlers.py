@@ -92,9 +92,14 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if payload:
         group = get_group_by_id(payload)
         if group:
-            await restore_group_to_user(group, context.bot, update.effective_chat.id)
-            # 自动发送确认消息
-            await update.message.reply_text("✅ 内容已发送！")
+            # 先发送欢迎消息，引导用户点击开始
+            await update.message.reply_text("🎉 欢迎！点击下方按钮开始获取内容：")
+            
+            # 创建内联键盘，让用户一键开始
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🚀 开始获取内容", callback_data=f"get_content_{payload}")]
+            ])
+            await update.message.reply_text("请点击下方按钮获取内容：", reply_markup=keyboard)
         else:
             await update.message.reply_text("资源未找到或链接已失效。")
     else:
@@ -176,6 +181,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
     elif query.data == "admin_manage":
         await query.edit_message_text("管理员管理：\n请发送 /addadmin <Telegram用户ID> 来添加管理员。\n只有管理员可用。")
+        await query.answer()
+    elif query.data.startswith("get_content_"):
+        # 处理获取内容按钮
+        group_id = query.data.replace("get_content_", "")
+        group = get_group_by_id(group_id)
+        if group:
+            await restore_group_to_user(group, context.bot, query.message.chat_id)
+            await query.edit_message_text("✅ 内容已发送！")
+        else:
+            await query.edit_message_text("❌ 内容未找到或已失效！")
         await query.answer()
 
 async def content_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
