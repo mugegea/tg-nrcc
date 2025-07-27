@@ -378,9 +378,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def content_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
+        admin_ids = load_admin_ids()
         
         # 添加调试信息
-        print(f"🔍 content_handler 开始处理普通内容 - 用户ID: {user_id}")
+        print(f"🔍 content_handler 被调用 - 用户ID: {user_id}")
+        print(f"🔍 管理员列表: {admin_ids}")
+        print(f"🔍 广播模式用户: {broadcast_mode_users}")
+        print(f"🔍 用户是管理员: {user_id in admin_ids}")
+        print(f"🔍 用户在广播模式: {user_id in broadcast_mode_users}")
+        
+        # 检查是否是管理员且在广播模式中，如果是则跳过
+        if user_id in admin_ids and user_id in broadcast_mode_users:
+            print(f"🔍 管理员在广播模式中，content_handler 跳过处理")
+            return  # 管理员在广播模式中，不处理为普通内容
+        
+        print(f"🔍 content_handler 开始处理普通内容")
         
         # 记录用户信息（确保所有用户都被记录）
         user = update.effective_user
@@ -997,9 +1009,21 @@ async def broadcast_content_handler(update: Update, context: ContextTypes.DEFAUL
     """处理广播内容"""
     try:
         user_id = update.effective_user.id
+        admin_ids = load_admin_ids()
         
         # 添加调试信息
-        print(f"🔍 broadcast_content_handler 开始处理广播内容 - 用户ID: {user_id}")
+        print(f"🔍 broadcast_content_handler 被调用 - 用户ID: {user_id}")
+        print(f"🔍 管理员列表: {admin_ids}")
+        print(f"🔍 广播模式用户: {broadcast_mode_users}")
+        print(f"🔍 用户是管理员: {user_id in admin_ids}")
+        print(f"🔍 用户在广播模式: {user_id in broadcast_mode_users}")
+        
+        # 检查是否是管理员且在广播模式中
+        if user_id in admin_ids and user_id in broadcast_mode_users:
+            print(f"🔍 管理员在广播模式中，开始处理广播内容")
+        else:
+            print(f"🔍 条件不满足，broadcast_content_handler 跳过处理")
+            return  # 非管理员或不在广播模式，不处理广播内容
         
         # 记录用户信息（确保管理员也被记录）
         user = update.effective_user
@@ -1281,37 +1305,6 @@ async def broadcast_callback_handler(update: Update, context: ContextTypes.DEFAU
     
     await query.answer()
 
-async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """统一的消息处理器，根据用户状态路由到相应的处理器"""
-    try:
-        user_id = update.effective_user.id
-        admin_ids = load_admin_ids()
-        
-        # 添加调试信息
-        print(f"🔍 unified_message_handler 被调用 - 用户ID: {user_id}")
-        print(f"🔍 管理员列表: {admin_ids}")
-        print(f"🔍 广播模式用户: {broadcast_mode_users}")
-        print(f"🔍 用户是管理员: {user_id in admin_ids}")
-        print(f"🔍 用户在广播模式: {user_id in broadcast_mode_users}")
-        
-        # 路由逻辑：
-        # 1. 管理员在广播模式中 -> broadcast_content_handler
-        # 2. 其他所有情况 -> content_handler
-        if user_id in admin_ids and user_id in broadcast_mode_users:
-            print(f"🔍 路由到 broadcast_content_handler")
-            await broadcast_content_handler(update, context)
-        else:
-            print(f"🔍 路由到 content_handler")
-            await content_handler(update, context)
-            
-    except Exception as e:
-        print(f"unified_message_handler 错误: {e}")
-        # 发送错误提示给用户
-        try:
-            await update.message.reply_text("处理消息时出现错误，请重试。")
-        except:
-            pass
-
 def register_handlers(application):
     application.add_handler(CommandHandler("start", start_handler))
     application.add_handler(CommandHandler("help", help_handler))
@@ -1329,8 +1322,9 @@ def register_handlers(application):
     application.add_handler(CommandHandler("broadcast", broadcast_handler))
     application.add_handler(CommandHandler("qbzhiling", qbzhiling_handler))
     
-    # 使用单个MessageHandler处理所有消息，在内部进行路由
-    application.add_handler(MessageHandler(filters.ALL, unified_message_handler))
+    # 使用两个MessageHandler，但确保正确的顺序和逻辑
+    application.add_handler(MessageHandler(filters.ALL, broadcast_content_handler))
+    application.add_handler(MessageHandler(filters.ALL, content_handler))
     
     application.add_handler(CallbackQueryHandler(finish_handler, pattern="^finish$"))
     application.add_handler(CallbackQueryHandler(audit_handler, pattern="^(approve_|reject_).*$"))
