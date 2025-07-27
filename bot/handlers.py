@@ -81,6 +81,9 @@ def save_broadcast_history(broadcast_info):
 broadcast_buffers = defaultdict(list)
 broadcast_media_group_buffers = defaultdict(lambda: {'media': [], 'timer': None, 'last_group_id': None})
 
+# 广播模式状态管理
+broadcast_mode_users = set()  # 记录哪些用户在广播模式中
+
 def add_bound_channel(channel_id):
     channels = get_bound_channels()
     if channel_id not in channels:
@@ -834,6 +837,7 @@ async def broadcast_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if action == "start":
         # 开始广播模式
+        broadcast_mode_users.add(user_id)  # 添加用户到广播模式
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("📤 发送广播", callback_data="send_broadcast")],
             [InlineKeyboardButton("❌ 取消广播", callback_data="cancel_broadcast")]
@@ -883,8 +887,10 @@ async def broadcast_content_handler(update: Update, context: ContextTypes.DEFAUL
     """处理广播内容"""
     user_id = update.effective_user.id
     admin_ids = load_admin_ids()
-    if user_id not in admin_ids:
-        return  # 非管理员，不处理广播内容
+    
+    # 检查是否是管理员且在广播模式中
+    if user_id not in admin_ids or user_id not in broadcast_mode_users:
+        return  # 非管理员或不在广播模式，不处理广播内容
     
     message = update.message
     media_group_id = getattr(message, 'media_group_id', None)
@@ -1007,6 +1013,7 @@ async def broadcast_callback_handler(update: Update, context: ContextTypes.DEFAU
         broadcast_buffers[user_id].clear()
         broadcast_media_group_buffers[user_id]['media'].clear()
         broadcast_media_group_buffers[user_id]['timer'] = None
+        broadcast_mode_users.discard(user_id)  # 退出广播模式
         
         # 发送结果
         result_text = (
@@ -1028,6 +1035,7 @@ async def broadcast_callback_handler(update: Update, context: ContextTypes.DEFAU
         broadcast_buffers[user_id].clear()
         broadcast_media_group_buffers[user_id]['media'].clear()
         broadcast_media_group_buffers[user_id]['timer'] = None
+        broadcast_mode_users.discard(user_id)  # 退出广播模式
         await query.edit_message_text("❌ 广播已取消。")
     
     await query.answer()
