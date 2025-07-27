@@ -36,16 +36,19 @@ pip3 install -r requirements.txt
 # 4. 初始化 storage 目录
 print_info "初始化 storage 目录..."
 mkdir -p storage
-       touch storage/admin_ids.json storage/bind_channels.json storage/backup_channels.json storage/bind_channel.txt storage/intro.txt storage/force_follow.json storage/follow_stats.json
-       echo "[]" > storage/admin_ids.json
-       echo "[]" > storage/bind_channels.json
-       echo "[]" > storage/backup_channels.json
-       echo "" > storage/bind_channel.txt
-       echo "这是一个资源管理机器人，支持任意内容合并分享。" > storage/intro.txt
-       echo '{"enabled": false, "channel_id": "", "channel_username": ""}' > storage/force_follow.json
-       echo '{"total_follows": 0, "today_follows": 0, "last_reset_date": "", "follow_records": []}' > storage/follow_stats.json
+touch storage/admin_ids.json storage/bind_channels.json storage/backup_channels.json storage/bind_channel.txt storage/intro.txt storage/force_follow.json storage/follow_stats.json storage/users.json storage/broadcast_history.json
+echo "[]" > storage/admin_ids.json
+echo "[]" > storage/bind_channels.json
+echo "[]" > storage/backup_channels.json
+echo "" > storage/bind_channel.txt
+echo "这是一个资源管理机器人，支持任意内容合并分享。" > storage/intro.txt
+echo '{"enabled": false, "channel_id": "", "channel_username": ""}' > storage/force_follow.json
+echo '{"total_follows": 0, "today_follows": 0, "last_reset_date": "", "follow_records": []}' > storage/follow_stats.json
+echo "[]" > storage/users.json
+echo "[]" > storage/broadcast_history.json
 
 print_success "storage 目录初始化完成！"
+print_info "已创建广播功能所需的用户数据库和广播历史文件"
 
 # 5. 引导用户配置 .env
 if [ ! -f .env ]; then
@@ -61,4 +64,6 @@ else
   print_info ".env 已存在，请确认内容无误。"
 fi
 
-print_success "==== 部署完成！下一步：请编辑 .env 文件，然后用 python3 -m bot.main 测试运行 ====" 
+print_success "==== 部署完成！下一步：请编辑 .env 文件，然后用 python3 -m bot.main 测试运行 ===="
+print_info "💡 新功能提示：机器人现在支持广播功能，管理员可以使用 /broadcast 命令向所有用户发送消息"
+print_info "📖 详细使用说明请查看 BROADCAST_README.md 文件" 
