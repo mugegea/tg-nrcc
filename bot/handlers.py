@@ -387,10 +387,19 @@ async def content_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"🔍 用户是管理员: {user_id in admin_ids}")
         print(f"🔍 用户在广播模式: {user_id in broadcast_mode_users}")
         
-        # 检查是否是管理员且在广播模式中，如果是则跳过
-        if user_id in admin_ids and user_id in broadcast_mode_users:
+        # 新的逻辑：
+        # 1. 普通用户永远正常投稿
+        # 2. 管理员只有在广播模式中才跳过普通投稿
+        if user_id not in admin_ids:
+            # 普通用户 - 永远正常投稿
+            print(f"🔍 普通用户，正常处理投稿")
+        elif user_id in admin_ids and user_id in broadcast_mode_users:
+            # 管理员在广播模式中 - 跳过普通投稿
             print(f"🔍 管理员在广播模式中，content_handler 跳过处理")
-            return  # 管理员在广播模式中，不处理为普通内容
+            return
+        else:
+            # 管理员不在广播模式中 - 正常投稿
+            print(f"🔍 管理员不在广播模式中，正常处理投稿")
         
         print(f"🔍 content_handler 开始处理普通内容")
         
@@ -1018,12 +1027,19 @@ async def broadcast_content_handler(update: Update, context: ContextTypes.DEFAUL
         print(f"🔍 用户是管理员: {user_id in admin_ids}")
         print(f"🔍 用户在广播模式: {user_id in broadcast_mode_users}")
         
-        # 检查是否是管理员且在广播模式中
-        if user_id not in admin_ids or user_id not in broadcast_mode_users:
-            print(f"🔍 条件不满足，退出处理")
-            return  # 非管理员或不在广播模式，不处理广播内容
-        
-        print(f"🔍 开始处理广播内容")
+        # 新的逻辑：
+        # 只有管理员且在广播模式中才处理广播内容
+        if user_id not in admin_ids:
+            # 普通用户 - 不处理广播内容
+            print(f"🔍 普通用户，broadcast_content_handler 跳过处理")
+            return
+        elif user_id not in broadcast_mode_users:
+            # 管理员不在广播模式中 - 不处理广播内容
+            print(f"🔍 管理员不在广播模式中，broadcast_content_handler 跳过处理")
+            return
+        else:
+            # 管理员在广播模式中 - 处理广播内容
+            print(f"🔍 管理员在广播模式中，开始处理广播内容")
         
         # 记录用户信息（确保管理员也被记录）
         user = update.effective_user
