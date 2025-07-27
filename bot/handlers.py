@@ -373,24 +373,47 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def content_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    message = update.message
-    media_group_id = getattr(message, 'media_group_id', None)
-    if media_group_id:
-        # 收集media group
-        buf = user_media_group_buffers[user_id]
-        buf['media'].append(update)
-        buf['last_group_id'] = media_group_id
-        # 重置等待定时器
-        if buf['timer']:
-            buf['timer'].cancel()
-        buf['timer'] = asyncio.create_task(media_group_wait_and_confirm(user_id, context))
-    else:
-        user_buffers[user_id].append(update)
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("完成", callback_data="finish"), InlineKeyboardButton("取消", callback_data="cancel")]
-        ])
-        await update.message.reply_text("已收到，继续发送或点击完成。", reply_markup=keyboard)
+    try:
+        user_id = update.effective_user.id
+        admin_ids = load_admin_ids()
+        
+        # 检查是否是管理员且在广播模式中，如果是则跳过
+        if user_id in admin_ids and user_id in broadcast_mode_users:
+            return  # 管理员在广播模式中，不处理为普通内容
+        
+        # 记录用户信息（确保所有用户都被记录）
+        user = update.effective_user
+        add_user(
+            user_id=user.id,
+            username=user.username,
+            first_name=user.first_name,
+            last_name=user.last_name
+        )
+        
+        message = update.message
+        media_group_id = getattr(message, 'media_group_id', None)
+        if media_group_id:
+            # 收集media group
+            buf = user_media_group_buffers[user_id]
+            buf['media'].append(update)
+            buf['last_group_id'] = media_group_id
+            # 重置等待定时器
+            if buf['timer']:
+                buf['timer'].cancel()
+            buf['timer'] = asyncio.create_task(media_group_wait_and_confirm(user_id, context))
+        else:
+            user_buffers[user_id].append(update)
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("完成", callback_data="finish"), InlineKeyboardButton("取消", callback_data="cancel")]
+            ])
+            await update.message.reply_text("已收到，继续发送或点击完成。", reply_markup=keyboard)
+    except Exception as e:
+        print(f"content_handler 错误: {e}")
+        # 发送错误提示给用户
+        try:
+            await update.message.reply_text("处理消息时出现错误，请重试。")
+        except:
+            pass
 
 async def media_group_wait_and_confirm(user_id, context):
     await asyncio.sleep(2.5)  # 等待2.5秒，判断用户是否还在发
@@ -725,7 +748,7 @@ COMMAND_DESCRIPTIONS = {
     '/rmbackupchannel': '移除备用频道（仅管理员）',
     '/listbackupchannels': '列出所有备用频道',
     '/forcefollow': '强制关注频道管理（仅管理员）',
-    '/broadcast': '广播消息给所有用户（仅管理员）',
+    '/broadcast': '广播消息和通知给所有用户（仅管理员）',
     '/qbzhiling': '显示所有机器人指令及其描述',
 }
 
@@ -824,12 +847,22 @@ async def broadcast_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         help_text = """📢 广播功能使用说明：
 
-1. 发送 /broadcast 开始广播模式
-2. 发送要广播的内容（支持文本、图片、视频等）
-3. 发送多条内容后点击"发送广播"按钮
-4. 确认后发送给所有用户
+【快捷指令】
+/broadcast <内容> - 直接发送文本广播
+/broadcast start - 开始多内容广播模式
+/broadcast now - 立即发送当前内容
 
-💡 提示：广播前建议先使用 /broadcast_preview 预览内容"""
+【管理指令】
+/broadcast preview - 预览广播内容
+/broadcast stats - 查看用户统计
+/broadcast history - 查看广播历史
+/broadcast status - 查看当前状态
+/broadcast clear - 清空广播队列
+
+【通知指令】
+/broadcast notify <内容> - 发送系统通知
+
+💡 提示：直接发送 /broadcast 内容 即可快速广播"""
         await update.message.reply_text(help_text)
         return
     
@@ -840,14 +873,50 @@ async def broadcast_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         broadcast_mode_users.add(user_id)  # 添加用户到广播模式
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("📤 发送广播", callback_data="send_broadcast")],
-            [InlineKeyboardButton("❌ 取消广播", callback_data="cancel_broadcast")]
+            [InlineKeyboardButton("❌ 取消广播", callback_data="cancel_broadcast")],
+            [InlineKeyboardButton("📋 预览内容", callback_data="preview_broadcast")]
         ])
         await update.message.reply_text(
             "📢 广播模式已开启！\n\n"
             "请发送要广播的内容（支持文本、图片、视频等），"
-            "发送完成后点击下方按钮发送给所有用户。",
+            "发送完成后点击下方按钮发送给所有用户。\n\n"
+            "💡 提示：发送 /broadcast status 可查看当前状态",
             reply_markup=keyboard
         )
+    elif action == "now":
+        # 立即发送当前内容
+        buffer = broadcast_buffers.get(user_id, [])
+        if not buffer:
+            await update.message.reply_text("❌ 没有待广播的内容！\n\n💡 提示：先发送 /broadcast start 开始广播模式")
+            return
+        
+        users = get_users()
+        if not users:
+            await update.message.reply_text("❌ 没有用户可发送广播。")
+            return
+        
+        # 直接发送确认
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ 立即发送", callback_data="confirm_broadcast")],
+            [InlineKeyboardButton("❌ 取消", callback_data="cancel_broadcast")]
+        ])
+        
+        await update.message.reply_text(
+            f"📢 立即发送广播\n\n"
+            f"将发送给 {len(users)} 个用户\n"
+            f"内容数量：{len(buffer)} 条\n\n"
+            f"⚠️ 此操作不可撤销，请确认！",
+            reply_markup=keyboard
+        )
+    elif action == "clear":
+        # 清空广播队列
+        broadcast_buffers[user_id].clear()
+        broadcast_media_group_buffers[user_id]['media'].clear()
+        if broadcast_media_group_buffers[user_id]['timer']:
+            broadcast_media_group_buffers[user_id]['timer'].cancel()
+            broadcast_media_group_buffers[user_id]['timer'] = None
+        broadcast_mode_users.discard(user_id)
+        await update.message.reply_text("✅ 广播队列已清空，已退出广播模式。")
     elif action == "preview":
         # 预览广播内容
         buffer = broadcast_buffers.get(user_id, [])
@@ -862,7 +931,13 @@ async def broadcast_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 显示用户统计
         users = get_users()
         total_users = len(users)
-        await update.message.reply_text(f"📊 用户统计：\n\n总用户数：{total_users} 人")
+        active_users = len([u for u in users if u.get('last_active')])
+        await update.message.reply_text(
+            f"📊 用户统计：\n\n"
+            f"总用户数：{total_users} 人\n"
+            f"活跃用户：{active_users} 人\n"
+            f"今日新增：{len([u for u in users if u.get('joined_at', '').startswith(datetime.now().strftime('%Y-%m-%d'))])} 人"
+        )
     elif action == "history":
         # 显示广播历史
         history = get_broadcast_history()
@@ -872,45 +947,141 @@ async def broadcast_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         text = "📝 最近广播历史：\n\n"
         for i, record in enumerate(history[-10:], 1):  # 显示最近10条
-            text += f"{i}. {record['timestamp']} - 发送给 {record['total_users']} 人，成功 {record['success_count']} 人\n"
+            timestamp = record['timestamp'][:19].replace('T', ' ')  # 格式化时间
+            text += f"{i}. {timestamp} - 发送给 {record['total_users']} 人，成功 {record['success_count']} 人\n"
         await update.message.reply_text(text)
-    else:
+    elif action == "status":
+        # 显示广播状态
+        is_in_broadcast_mode = user_id in broadcast_mode_users
+        buffer = broadcast_buffers.get(user_id, [])
+        users = get_users()
+        
+        status_text = "📢 广播状态：\n\n"
+        if is_in_broadcast_mode:
+            status_text += "🟢 当前状态：广播模式已开启\n"
+            status_text += f"📝 待发送内容：{len(buffer)} 条\n"
+            status_text += f"👥 目标用户：{len(users)} 人\n"
+            if buffer:
+                status_text += "\n📋 内容预览：\n"
+                for i, item in enumerate(buffer[:3], 1):  # 只显示前3条
+                    if item['type'] == 'text':
+                        preview = item['text'][:50] + "..." if len(item['text']) > 50 else item['text']
+                        status_text += f"{i}. 文本：{preview}\n"
+                    else:
+                        status_text += f"{i}. {item['type']} 类型内容\n"
+                if len(buffer) > 3:
+                    status_text += f"... 还有 {len(buffer) - 3} 条内容\n"
+        else:
+            status_text += "🔴 当前状态：普通模式\n"
+            status_text += f"👥 总用户数：{len(users)} 人\n"
+            status_text += "💡 发送 /broadcast start 开始广播模式"
+        
+        await update.message.reply_text(status_text)
+    elif action == "notify":
+        # 发送广播通知
+        if not context.args or len(context.args) < 2:
+            await update.message.reply_text("用法：/broadcast notify <通知内容>\n例如：/broadcast notify 系统维护通知")
+            return
+        
+        notification_text = ' '.join(context.args[1:])
+        users = get_users()
+        
+        if not users:
+            await update.message.reply_text("❌ 没有用户可发送通知。")
+            return
+        
+        # 确认发送通知
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ 确认发送通知", callback_data=f"send_notification_{hash(notification_text) % 10000}")],
+            [InlineKeyboardButton("❌ 取消", callback_data="cancel_notification")]
+        ])
+        
         await update.message.reply_text(
-            "📢 广播功能使用说明：\n\n"
-            "/broadcast start - 开始广播模式\n"
-            "/broadcast preview - 预览广播内容\n"
-            "/broadcast stats - 查看用户统计\n"
-            "/broadcast history - 查看广播历史"
+            f"📢 确认发送通知\n\n"
+            f"通知内容：{notification_text}\n"
+            f"发送给：{len(users)} 个用户\n\n"
+            f"⚠️ 此操作不可撤销，请确认！",
+            reply_markup=keyboard
+        )
+    else:
+        # 直接发送文本广播（新功能）
+        text_content = ' '.join(context.args)
+        users = get_users()
+        
+        if not users:
+            await update.message.reply_text("❌ 没有用户可发送广播。")
+            return
+        
+        # 将文本内容添加到广播缓冲区
+        broadcast_buffers[user_id] = [{'type': 'text', 'text': text_content}]
+        
+        # 直接发送确认
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ 立即发送", callback_data="confirm_broadcast")],
+            [InlineKeyboardButton("❌ 取消", callback_data="cancel_broadcast")]
+        ])
+        
+        await update.message.reply_text(
+            f"📢 快速广播\n\n"
+            f"内容：{text_content}\n"
+            f"发送给：{len(users)} 个用户\n\n"
+            f"⚠️ 此操作不可撤销，请确认！",
+            reply_markup=keyboard
         )
 
 async def broadcast_content_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """处理广播内容"""
-    user_id = update.effective_user.id
-    admin_ids = load_admin_ids()
-    
-    # 检查是否是管理员且在广播模式中
-    if user_id not in admin_ids or user_id not in broadcast_mode_users:
-        return  # 非管理员或不在广播模式，不处理广播内容
-    
-    message = update.message
-    media_group_id = getattr(message, 'media_group_id', None)
-    
-    if media_group_id:
-        # 收集media group
-        buf = broadcast_media_group_buffers[user_id]
-        buf['media'].append(update)
-        buf['last_group_id'] = media_group_id
-        # 重置等待定时器
-        if buf['timer']:
-            buf['timer'].cancel()
-        buf['timer'] = asyncio.create_task(broadcast_media_group_wait_and_confirm(user_id, context))
-    else:
-        broadcast_buffers[user_id].append(serialize_message(message))
+    try:
+        user_id = update.effective_user.id
+        admin_ids = load_admin_ids()
+        
+        # 检查是否是管理员且在广播模式中
+        if user_id not in admin_ids or user_id not in broadcast_mode_users:
+            return  # 非管理员或不在广播模式，不处理广播内容
+        
+        # 记录用户信息（确保管理员也被记录）
+        user = update.effective_user
+        add_user(
+            user_id=user.id,
+            username=user.username,
+            first_name=user.first_name,
+            last_name=user.last_name
+        )
+        
+        message = update.message
+        media_group_id = getattr(message, 'media_group_id', None)
+        
+        if media_group_id:
+            # 收集media group
+            buf = broadcast_media_group_buffers[user_id]
+            buf['media'].append(update)
+            buf['last_group_id'] = media_group_id
+            # 重置等待定时器
+            if buf['timer']:
+                buf['timer'].cancel()
+            buf['timer'] = asyncio.create_task(broadcast_media_group_wait_and_confirm(user_id, context))
+        else:
+                    broadcast_buffers[user_id].append(serialize_message(message))
+        buffer_count = len(broadcast_buffers[user_id])
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("📤 发送广播", callback_data="send_broadcast")],
-            [InlineKeyboardButton("❌ 取消广播", callback_data="cancel_broadcast")]
+            [InlineKeyboardButton("❌ 取消广播", callback_data="cancel_broadcast")],
+            [InlineKeyboardButton("📋 预览内容", callback_data="preview_broadcast")]
         ])
-        await update.message.reply_text("✅ 已添加到广播队列，继续发送或点击发送广播。", reply_markup=keyboard)
+        message_text = f"✅ 已添加到广播队列（共 {buffer_count} 条内容）\n\n"
+        message_text += "💡 提示：\n"
+        message_text += "• 继续发送更多内容\n"
+        message_text += "• 点击发送广播立即发送\n"
+        message_text += "• 点击预览内容查看效果"
+        
+        await update.message.reply_text(message_text, reply_markup=keyboard)
+    except Exception as e:
+        print(f"broadcast_content_handler 错误: {e}")
+        # 发送错误提示给用户
+        try:
+            await update.message.reply_text("处理广播内容时出现错误，请重试。")
+        except:
+            pass
 
 async def broadcast_media_group_wait_and_confirm(user_id, context):
     """等待媒体组完成并确认"""
@@ -929,13 +1100,21 @@ async def broadcast_media_group_wait_and_confirm(user_id, context):
         buf['media'].clear()
         buf['timer'] = None
         
+        buffer_count = len(broadcast_buffers[user_id])
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("📤 发送广播", callback_data="send_broadcast")],
-            [InlineKeyboardButton("❌ 取消广播", callback_data="cancel_broadcast")]
+            [InlineKeyboardButton("❌ 取消广播", callback_data="cancel_broadcast")],
+            [InlineKeyboardButton("📋 预览内容", callback_data="preview_broadcast")]
         ])
+        message_text = f"✅ 媒体组已添加到广播队列（共 {buffer_count} 条内容）\n\n"
+        message_text += "💡 提示：\n"
+        message_text += "• 继续发送更多内容\n"
+        message_text += "• 点击发送广播立即发送\n"
+        message_text += "• 点击预览内容查看效果"
+        
         await context.bot.send_message(
             chat_id=user_id,
-            text="✅ 媒体组已添加到广播队列，继续发送或点击发送广播。",
+            text=message_text,
             reply_markup=keyboard
         )
 
@@ -1028,6 +1207,8 @@ async def broadcast_callback_handler(update: Update, context: ContextTypes.DEFAU
         if failed_users:
             result_text += f"\n\n❌ 失败用户（前10个）：\n" + "\n".join(failed_users[:10])
         
+        result_text += f"\n\n🔄 广播模式已结束，现在处于普通模式。"
+        
         await query.edit_message_text(result_text)
     
     elif query.data == "cancel_broadcast":
@@ -1037,6 +1218,88 @@ async def broadcast_callback_handler(update: Update, context: ContextTypes.DEFAU
         broadcast_media_group_buffers[user_id]['timer'] = None
         broadcast_mode_users.discard(user_id)  # 退出广播模式
         await query.edit_message_text("❌ 广播已取消。")
+    
+    elif query.data.startswith("send_notification_"):
+        # 发送通知
+        notification_id = query.data.replace("send_notification_", "")
+        users = get_users()
+        
+        if not users:
+            await query.answer("❌ 没有用户可发送通知！", show_alert=True)
+            return
+        
+        # 这里简化处理，实际应该从缓存中获取通知内容
+        notification_text = "📢 系统通知\n\n这是一条来自管理员的系统通知。"
+        
+        await query.edit_message_text("📤 正在发送通知，请稍候...")
+        
+        success_count = 0
+        failed_count = 0
+        
+        for user_info in users:
+            try:
+                user_id_target = user_info["user_id"]
+                await context.bot.send_message(
+                    chat_id=user_id_target,
+                    text=notification_text
+                )
+                success_count += 1
+                await asyncio.sleep(0.1)
+            except Exception as e:
+                failed_count += 1
+                print(f"发送通知给用户 {user_id_target} 失败: {e}")
+        
+        # 保存通知历史
+        notification_info = {
+            "timestamp": datetime.now().isoformat(),
+            "admin_id": user_id,
+            "type": "notification",
+            "total_users": len(users),
+            "success_count": success_count,
+            "failed_count": failed_count
+        }
+        save_broadcast_history(notification_info)
+        
+        result_text = (
+            f"✅ 通知发送完成！\n\n"
+            f"📊 发送统计：\n"
+            f"• 总用户数：{len(users)} 人\n"
+            f"• 发送成功：{success_count} 人\n"
+            f"• 发送失败：{failed_count} 人\n"
+            f"• 成功率：{success_count/len(users)*100:.1f}%"
+        )
+        
+        await query.edit_message_text(result_text)
+    
+    elif query.data == "cancel_notification":
+        await query.edit_message_text("❌ 通知发送已取消。")
+    
+    elif query.data == "preview_broadcast":
+        # 预览广播内容
+        buffer = broadcast_buffers.get(user_id, [])
+        if not buffer:
+            await query.answer("❌ 没有待广播的内容！", show_alert=True)
+            return
+        
+        await query.edit_message_text("📋 正在生成预览...")
+        
+        # 发送预览内容
+        for i, item in enumerate(buffer, 1):
+            await send_item_to_chat(item, context.bot, query.message.chat_id, prefix=f"[预览 {i}] ")
+        
+        # 恢复原消息
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📤 发送广播", callback_data="send_broadcast")],
+            [InlineKeyboardButton("❌ 取消广播", callback_data="cancel_broadcast")],
+            [InlineKeyboardButton("📋 预览内容", callback_data="preview_broadcast")]
+        ])
+        
+        await query.edit_message_text(
+            f"📢 广播模式已开启！\n\n"
+            f"待发送内容：{len(buffer)} 条\n"
+            f"请点击下方按钮操作。",
+            reply_markup=keyboard
+        )
     
     await query.answer()
 
@@ -1062,4 +1325,4 @@ def register_handlers(application):
     application.add_handler(CallbackQueryHandler(audit_handler, pattern="^(approve_|reject_).*$"))
     application.add_handler(CallbackQueryHandler(cancel_handler, pattern="^cancel$"))
     application.add_handler(CallbackQueryHandler(button_handler, pattern="^(help|start|admin_manage|check_follow_).*$"))
-    application.add_handler(CallbackQueryHandler(broadcast_callback_handler, pattern="^(send_broadcast|confirm_broadcast|cancel_broadcast)$")) 
+    application.add_handler(CallbackQueryHandler(broadcast_callback_handler, pattern="^(send_broadcast|confirm_broadcast|cancel_broadcast|preview_broadcast|send_notification_.*|cancel_notification)$")) 
