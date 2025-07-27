@@ -565,9 +565,12 @@ async def finish_handler(update: Update, context):
         print(f"🔍 内容数量: {len(grouped)}")
         
         try:
+            # 先发送内容到频道
             await send_group_to_channel(grouped, context.bot)
             print(f"🔍 内容已发送到频道")
             
+            # 生成 group_id 并存储到数据库
+            from backend.utils import generate_group_id, store_group_mapping
             group_id = generate_group_id()
             print(f"🔍 生成的group_id: {group_id}")
             
@@ -577,10 +580,16 @@ async def finish_handler(update: Update, context):
             link = generate_link(group_id)
             print(f"🔍 生成的链接: {link}")
             
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("点击访问内容", url=link)]
-            ])
-            await context.bot.send_message(chat_id=query.message.chat_id, text=f"✅ 链接已生成 👇\n{link}", reply_markup=keyboard)
+            # 检查链接是否有效
+            if link.startswith("⚠️"):
+                # 链接生成失败，只发送文本
+                await context.bot.send_message(chat_id=query.message.chat_id, text=f"✅ 内容已上传到频道\n{link}")
+            else:
+                # 链接生成成功，发送带按钮的消息
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("点击访问内容", url=link)]
+                ])
+                await context.bot.send_message(chat_id=query.message.chat_id, text=f"✅ 链接已生成 👇\n{link}", reply_markup=keyboard)
             await send_link_to_backup_channels(link, context.bot)
             print(f"🔍 链接已发送给用户和备份频道")
             
