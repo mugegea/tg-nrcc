@@ -2,7 +2,7 @@ import os
 import asyncio
 from collections import defaultdict
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ContextTypes, CommandHandler, MessageHandler, CallbackQueryHandler, filters
+from telegram.ext import CommandHandler, MessageHandler, CallbackQueryHandler, filters
 from backend.utils import save_group_to_channel, store_group_mapping, get_group_by_id, generate_link, generate_group_id
 import json
 from datetime import datetime
@@ -221,7 +221,7 @@ async def showchannel_handler(update, context):
     channel_id = get_bound_channel()
     await update.message.reply_text(f"当前绑定频道ID：{channel_id}")
 
-async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_handler(update: Update, context):
     payload = context.args[0] if context.args else None
     
     # 记录用户信息
@@ -269,7 +269,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"欢迎！请发送任意内容，发送多条后点击下方“完成”按钮，我会帮你生成访问链接并备份到频道。\n\n{get_intro()}"
         )
 
-async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def help_handler(update: Update, context):
     help_text = (
         "【功能说明】\n"
         "- 支持任意内容（文本、图片、视频等）发送给机器人，生成唯一访问链接\n"
@@ -285,10 +285,10 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(help_text)
 
-async def intro_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def intro_handler(update: Update, context):
     await update.message.reply_text(get_intro())
 
-async def setintro_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def setintro_handler(update: Update, context):
     user_id = update.effective_user.id
     admin_ids = load_admin_ids()
     if user_id not in admin_ids:
@@ -301,7 +301,7 @@ async def setintro_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_intro(text)
     await update.message.reply_text("介绍内容已更新！")
 
-async def addadmin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def addadmin_handler(update: Update, context):
     user_id = update.effective_user.id
     admin_ids = load_admin_ids()
     if user_id not in admin_ids:
@@ -317,7 +317,7 @@ async def addadmin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_admin_ids(admin_ids)
     await update.message.reply_text(f"已添加管理员：{new_admin}")
 
-async def deladmin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def deladmin_handler(update: Update, context):
     user_id = update.effective_user.id
     admin_ids = load_admin_ids()
     if user_id not in admin_ids:
@@ -333,7 +333,7 @@ async def deladmin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_admin_ids(admin_ids)
     await update.message.reply_text(f"已移除管理员：{del_admin}")
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def button_handler(update: Update, context):
     query = update.callback_query
     if query.data == "help":
         await help_handler(query, context)
@@ -375,7 +375,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
 
 
-async def content_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def content_handler(update: Update, context):
     try:
         user_id = update.effective_user.id
         admin_ids = load_admin_ids()
@@ -430,7 +430,7 @@ async def content_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
-async def handle_broadcast_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_broadcast_content(update: Update, context):
     """处理广播内容"""
     try:
         user_id = update.effective_user.id
@@ -529,7 +529,7 @@ async def send_group_to_channel(grouped, bot):
 
 pending_submissions = {}  # {submission_id: {'user_id':..., 'grouped':..., 'chat_id':..., 'message_id':..., 'admin_msg_ids': {admin_id: msg_id}}}
 
-async def finish_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def finish_handler(update: Update, context):
     query = update.callback_query
     user_id = query.from_user.id
     admin_ids = load_admin_ids()
@@ -627,7 +627,7 @@ async def send_group_to_admin_for_review(grouped, bot, admin_id, submission_id, 
         await send_item_to_chat(item, bot, admin_id)
     return sent.message_id
 
-async def audit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def audit_handler(update: Update, context):
     query = update.callback_query
     data = query.data
     admin_id = query.from_user.id
@@ -836,7 +836,7 @@ async def send_link_to_backup_channels(link, bot):
     for channel_id in channels:
         await bot.send_message(chat_id=int(channel_id), text=f"✅ 链接已生成 👇\n{link}")
 
-async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cancel_handler(update: Update, context):
     query = update.callback_query
     user_id = query.from_user.id
     user_buffers[user_id].clear()
@@ -948,7 +948,7 @@ async def forcefollow_handler(update, context):
         await update.message.reply_text("用法：\n/forcefollow on - 开启强制关注\n/forcefollow off - 关闭强制关注\n/forcefollow set <频道ID> - 设置频道\n/forcefollow show - 显示状态\n/forcefollow stats - 查看关注统计\n/forcefollow reset - 重置统计数据")
 
 # 广播功能
-async def broadcast_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def broadcast_handler(update: Update, context):
     """广播消息给所有用户"""
     user_id = update.effective_user.id
     admin_ids = load_admin_ids()
@@ -1130,7 +1130,7 @@ async def broadcast_media_group_wait_and_confirm(user_id, context):
         broadcast_mode_users.discard(user_id)
         print(f"🔍 已退出广播模式，用户ID: {user_id}")
 
-async def broadcast_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def broadcast_callback_handler(update: Update, context):
     """处理广播相关的回调"""
     query = update.callback_query
     user_id = query.from_user.id
