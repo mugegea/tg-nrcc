@@ -380,9 +380,19 @@ async def content_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         admin_ids = load_admin_ids()
         
+        # 添加调试信息
+        print(f"🔍 content_handler 被调用 - 用户ID: {user_id}")
+        print(f"🔍 管理员列表: {admin_ids}")
+        print(f"🔍 广播模式用户: {broadcast_mode_users}")
+        print(f"🔍 用户是管理员: {user_id in admin_ids}")
+        print(f"🔍 用户在广播模式: {user_id in broadcast_mode_users}")
+        
         # 检查是否是管理员且在广播模式中，如果是则跳过
         if user_id in admin_ids and user_id in broadcast_mode_users:
+            print(f"🔍 管理员在广播模式中，content_handler 跳过处理")
             return  # 管理员在广播模式中，不处理为普通内容
+        
+        print(f"🔍 content_handler 开始处理普通内容")
         
         # 记录用户信息（确保所有用户都被记录）
         user = update.effective_user
@@ -873,7 +883,10 @@ async def broadcast_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if action == "start":
         # 开始广播模式
+        print(f"🔍 执行 /broadcast start - 用户ID: {user_id}")
+        print(f"🔍 广播模式用户 (之前): {broadcast_mode_users}")
         broadcast_mode_users.add(user_id)  # 添加用户到广播模式
+        print(f"🔍 广播模式用户 (之后): {broadcast_mode_users}")
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("📤 发送广播", callback_data="send_broadcast")],
             [InlineKeyboardButton("❌ 取消广播", callback_data="cancel_broadcast")],
@@ -1041,9 +1054,19 @@ async def broadcast_content_handler(update: Update, context: ContextTypes.DEFAUL
         user_id = update.effective_user.id
         admin_ids = load_admin_ids()
         
+        # 添加调试信息
+        print(f"🔍 broadcast_content_handler 被调用 - 用户ID: {user_id}")
+        print(f"🔍 管理员列表: {admin_ids}")
+        print(f"🔍 广播模式用户: {broadcast_mode_users}")
+        print(f"🔍 用户是管理员: {user_id in admin_ids}")
+        print(f"🔍 用户在广播模式: {user_id in broadcast_mode_users}")
+        
         # 检查是否是管理员且在广播模式中
         if user_id not in admin_ids or user_id not in broadcast_mode_users:
+            print(f"🔍 条件不满足，退出处理")
             return  # 非管理员或不在广播模式，不处理广播内容
+        
+        print(f"🔍 开始处理广播内容")
         
         # 记录用户信息（确保管理员也被记录）
         user = update.effective_user
@@ -1067,20 +1090,20 @@ async def broadcast_content_handler(update: Update, context: ContextTypes.DEFAUL
                 buf['timer'].cancel()
             buf['timer'] = asyncio.create_task(broadcast_media_group_wait_and_confirm(user_id, context))
         else:
-                    broadcast_buffers[user_id].append(serialize_message(message))
-        buffer_count = len(broadcast_buffers[user_id])
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📤 发送广播", callback_data="send_broadcast")],
-            [InlineKeyboardButton("❌ 取消广播", callback_data="cancel_broadcast")],
-            [InlineKeyboardButton("📋 预览内容", callback_data="preview_broadcast")]
-        ])
-        message_text = f"✅ 已添加到广播队列（共 {buffer_count} 条内容）\n\n"
-        message_text += "💡 提示：\n"
-        message_text += "• 继续发送更多内容\n"
-        message_text += "• 点击发送广播立即发送\n"
-        message_text += "• 点击预览内容查看效果"
-        
-        await update.message.reply_text(message_text, reply_markup=keyboard)
+            broadcast_buffers[user_id].append(serialize_message(message))
+            buffer_count = len(broadcast_buffers[user_id])
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📤 发送广播", callback_data="send_broadcast")],
+                [InlineKeyboardButton("❌ 取消广播", callback_data="cancel_broadcast")],
+                [InlineKeyboardButton("📋 预览内容", callback_data="preview_broadcast")]
+            ])
+            message_text = f"✅ 已添加到广播队列（共 {buffer_count} 条内容）\n\n"
+            message_text += "💡 提示：\n"
+            message_text += "• 继续发送更多内容\n"
+            message_text += "• 点击发送广播立即发送\n"
+            message_text += "• 点击预览内容查看效果"
+            
+            await update.message.reply_text(message_text, reply_markup=keyboard)
     except Exception as e:
         print(f"broadcast_content_handler 错误: {e}")
         # 发送错误提示给用户
