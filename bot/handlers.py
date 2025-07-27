@@ -480,15 +480,35 @@ async def finish_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_buffers[user_id].clear()
     if user_id in admin_ids:
         await query.edit_message_text("正在上传并生成链接，请稍候…")
-        await send_group_to_channel(grouped, context.bot)
-        group_id = generate_group_id()
-        store_group_mapping(group_id, grouped)
-        link = generate_link(group_id)
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("点击访问内容", url=link)]
-        ])
-        await context.bot.send_message(chat_id=query.message.chat_id, text=f"✅ 链接已生成 👇\n{link}", reply_markup=keyboard)
-        await send_link_to_backup_channels(link, context.bot)
+        
+        # 添加调试信息
+        print(f"🔍 finish_handler - 管理员投稿，用户ID: {user_id}")
+        print(f"🔍 内容数量: {len(grouped)}")
+        
+        try:
+            await send_group_to_channel(grouped, context.bot)
+            print(f"🔍 内容已发送到频道")
+            
+            group_id = generate_group_id()
+            print(f"🔍 生成的group_id: {group_id}")
+            
+            store_group_mapping(group_id, grouped)
+            print(f"🔍 内容已存储到数据库")
+            
+            link = generate_link(group_id)
+            print(f"🔍 生成的链接: {link}")
+            
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("点击访问内容", url=link)]
+            ])
+            await context.bot.send_message(chat_id=query.message.chat_id, text=f"✅ 链接已生成 👇\n{link}", reply_markup=keyboard)
+            await send_link_to_backup_channels(link, context.bot)
+            print(f"🔍 链接已发送给用户和备份频道")
+            
+        except Exception as e:
+            print(f"🔍 finish_handler 错误: {e}")
+            await query.edit_message_text(f"❌ 生成链接时出现错误: {str(e)}")
+        
         await query.answer()
     else:
         await query.edit_message_text("内容已提交，等待管理员审核。")
@@ -1301,8 +1321,11 @@ def register_handlers(application):
     application.add_handler(CommandHandler("forcefollow", forcefollow_handler))
     application.add_handler(CommandHandler("broadcast", broadcast_handler))
     application.add_handler(CommandHandler("qbzhiling", qbzhiling_handler))
-    application.add_handler(MessageHandler(filters.ALL, content_handler))
+    
+    # 重要：广播内容处理器必须在普通内容处理器之前注册
     application.add_handler(MessageHandler(filters.ALL, broadcast_content_handler))
+    application.add_handler(MessageHandler(filters.ALL, content_handler))
+    
     application.add_handler(CallbackQueryHandler(finish_handler, pattern="^finish$"))
     application.add_handler(CallbackQueryHandler(audit_handler, pattern="^(approve_|reject_).*$"))
     application.add_handler(CallbackQueryHandler(cancel_handler, pattern="^cancel$"))
