@@ -63,5 +63,19 @@ async def save_group_to_channel(messages, bot):
 
 def generate_link(group_id):
     bot_username = os.getenv("BOT_USERNAME")
+    if not bot_username:
+        # 如果没有设置BOT_USERNAME，尝试从BOT_TOKEN获取
+        bot_token = os.getenv("BOT_TOKEN")
+        if bot_token:
+            # 从BOT_TOKEN中提取bot信息（格式：123456789:ABCdefGHIjklMNOpqrsTUVwxyz）
+            try:
+                bot_id = bot_token.split(':')[0]
+                # 使用bot ID作为备选方案
+                return f"https://t.me/bot{bot_id}?start={group_id}"
+            except:
+                pass
+        # 如果都失败了，返回一个提示信息
+        return f"⚠️ 链接生成失败：请设置BOT_USERNAME环境变量\nGroup ID: {group_id}"
+    
     # 使用 start 参数，让用户点击后直接打开机器人
     return f"https://t.me/{bot_username}?start={group_id}" 
