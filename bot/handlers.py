@@ -84,6 +84,9 @@ broadcast_media_group_buffers = defaultdict(lambda: {'media': [], 'timer': None,
 # 广播模式状态管理
 broadcast_mode_users = set()  # 记录哪些用户在广播模式中
 
+# 通知缓存
+notification_cache = {}  # {user_id: notification_text}
+
 def add_bound_channel(channel_id):
     channels = get_bound_channels()
     if channel_id not in channels:
@@ -990,9 +993,12 @@ async def broadcast_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ 没有用户可发送通知。")
             return
         
+        # 缓存通知内容
+        notification_cache[user_id] = notification_text
+        
         # 确认发送通知
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ 确认发送通知", callback_data=f"send_notification_{hash(notification_text) % 10000}")],
+            [InlineKeyboardButton("✅ 确认发送通知", callback_data="send_notification")],
             [InlineKeyboardButton("❌ 取消", callback_data="cancel_notification")]
         ])
         
@@ -1219,17 +1225,16 @@ async def broadcast_callback_handler(update: Update, context: ContextTypes.DEFAU
         broadcast_mode_users.discard(user_id)  # 退出广播模式
         await query.edit_message_text("❌ 广播已取消。")
     
-    elif query.data.startswith("send_notification_"):
+    elif query.data == "send_notification":
         # 发送通知
-        notification_id = query.data.replace("send_notification_", "")
         users = get_users()
         
         if not users:
             await query.answer("❌ 没有用户可发送通知！", show_alert=True)
             return
         
-        # 这里简化处理，实际应该从缓存中获取通知内容
-        notification_text = "📢 系统通知\n\n这是一条来自管理员的系统通知。"
+        # 从缓存中获取通知内容
+        notification_text = notification_cache.get(user_id, "📢 系统通知\n\n这是一条来自管理员的系统通知。")
         
         await query.edit_message_text("📤 正在发送通知，请稍候...")
         
@@ -1319,10 +1324,10 @@ def register_handlers(application):
     application.add_handler(CommandHandler("forcefollow", forcefollow_handler))
     application.add_handler(CommandHandler("broadcast", broadcast_handler))
     application.add_handler(CommandHandler("qbzhiling", qbzhiling_handler))
-    application.add_handler(MessageHandler(filters.ALL, broadcast_content_handler))
     application.add_handler(MessageHandler(filters.ALL, content_handler))
+    application.add_handler(MessageHandler(filters.ALL, broadcast_content_handler))
     application.add_handler(CallbackQueryHandler(finish_handler, pattern="^finish$"))
     application.add_handler(CallbackQueryHandler(audit_handler, pattern="^(approve_|reject_).*$"))
     application.add_handler(CallbackQueryHandler(cancel_handler, pattern="^cancel$"))
     application.add_handler(CallbackQueryHandler(button_handler, pattern="^(help|start|admin_manage|check_follow_).*$"))
-    application.add_handler(CallbackQueryHandler(broadcast_callback_handler, pattern="^(send_broadcast|confirm_broadcast|cancel_broadcast|preview_broadcast|send_notification_.*|cancel_notification)$")) 
+    application.add_handler(CallbackQueryHandler(broadcast_callback_handler, pattern="^(send_broadcast|confirm_broadcast|cancel_broadcast|preview_broadcast|send_notification|cancel_notification)$")) 
