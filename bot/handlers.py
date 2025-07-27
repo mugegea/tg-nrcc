@@ -387,10 +387,12 @@ async def content_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"🔍 用户是管理员: {user_id in admin_ids}")
         print(f"🔍 用户在广播模式: {user_id in broadcast_mode_users}")
         
-        # 检查是否是管理员且在广播模式中，如果是则跳过
+        # 检查是否是管理员且在广播模式中
         if user_id in admin_ids and user_id in broadcast_mode_users:
-            print(f"🔍 管理员在广播模式中，content_handler 跳过处理")
-            return  # 管理员在广播模式中，不处理为普通内容
+            print(f"🔍 管理员在广播模式中，处理广播内容")
+            # 处理广播内容
+            await handle_broadcast_content(update, context)
+            return
         
         print(f"🔍 content_handler 开始处理普通内容")
         
@@ -425,6 +427,83 @@ async def content_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 发送错误提示给用户
         try:
             await update.message.reply_text("处理消息时出现错误，请重试。")
+        except:
+            pass
+
+async def handle_broadcast_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理广播内容"""
+    try:
+        user_id = update.effective_user.id
+        
+        # 记录用户信息（确保管理员也被记录）
+        user = update.effective_user
+        add_user(
+            user_id=user.id,
+            username=user.username,
+            first_name=user.first_name,
+            last_name=user.last_name
+        )
+        
+        message = update.message
+        media_group_id = getattr(message, 'media_group_id', None)
+        
+        if media_group_id:
+            # 收集media group
+            buf = broadcast_media_group_buffers[user_id]
+            buf['media'].append(update)
+            buf['last_group_id'] = media_group_id
+            # 重置等待定时器
+            if buf['timer']:
+                buf['timer'].cancel()
+            buf['timer'] = asyncio.create_task(broadcast_media_group_wait_and_confirm(user_id, context))
+        else:
+            # 单内容模式：直接设置广播内容
+            broadcast_buffers[user_id] = [serialize_message(message)]
+            
+            # 获取用户数量
+            users = get_users()
+            
+            # 显示确认界面
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ 确认发送", callback_data="confirm_broadcast")],
+                [InlineKeyboardButton("❌ 取消", callback_data="cancel_broadcast")],
+                [InlineKeyboardButton("📋 预览内容", callback_data="preview_broadcast")]
+            ])
+            
+            # 根据内容类型生成预览文本
+            if message.text:
+                preview_text = message.text[:100] + "..." if len(message.text) > 100 else message.text
+                content_type = "文本"
+            elif message.photo:
+                content_type = "图片"
+                preview_text = "图片内容"
+            elif message.video:
+                content_type = "视频"
+                preview_text = "视频内容"
+            elif message.document:
+                content_type = "文档"
+                preview_text = "文档内容"
+            else:
+                content_type = "其他"
+                preview_text = "其他类型内容"
+            
+            message_text = f"📢 广播确认\n\n"
+            message_text += f"内容类型：{content_type}\n"
+            message_text += f"内容预览：{preview_text}\n"
+            message_text += f"发送给：{len(users)} 个用户\n\n"
+            message_text += "⚠️ 此操作不可撤销，请确认！"
+            
+            await update.message.reply_text(message_text, reply_markup=keyboard)
+            
+            # 退出广播模式
+            broadcast_mode_users.discard(user_id)
+            print(f"🔍 已退出广播模式，用户ID: {user_id}")
+            
+    except Exception as e:
+        print(f"handle_broadcast_content 错误: {e}")
+        # 发送错误提示给用户
+        try:
+            await update.message.reply_text("处理广播内容时出现错误，请重试。")
         except:
             pass
 
@@ -1005,97 +1084,7 @@ async def broadcast_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=keyboard
         )
 
-async def broadcast_content_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """处理广播内容"""
-    try:
-        user_id = update.effective_user.id
-        admin_ids = load_admin_ids()
-        
-        # 添加调试信息
-        print(f"🔍 broadcast_content_handler 被调用 - 用户ID: {user_id}")
-        print(f"🔍 管理员列表: {admin_ids}")
-        print(f"🔍 广播模式用户: {broadcast_mode_users}")
-        print(f"🔍 用户是管理员: {user_id in admin_ids}")
-        print(f"🔍 用户在广播模式: {user_id in broadcast_mode_users}")
-        
-        # 检查是否是管理员且在广播模式中
-        if user_id in admin_ids and user_id in broadcast_mode_users:
-            print(f"🔍 管理员在广播模式中，开始处理广播内容")
-        else:
-            print(f"🔍 条件不满足，broadcast_content_handler 跳过处理")
-            return  # 非管理员或不在广播模式，不处理广播内容
-        
-        # 记录用户信息（确保管理员也被记录）
-        user = update.effective_user
-        add_user(
-            user_id=user.id,
-            username=user.username,
-            first_name=user.first_name,
-            last_name=user.last_name
-        )
-        
-        message = update.message
-        media_group_id = getattr(message, 'media_group_id', None)
-        
-        if media_group_id:
-            # 收集media group
-            buf = broadcast_media_group_buffers[user_id]
-            buf['media'].append(update)
-            buf['last_group_id'] = media_group_id
-            # 重置等待定时器
-            if buf['timer']:
-                buf['timer'].cancel()
-            buf['timer'] = asyncio.create_task(broadcast_media_group_wait_and_confirm(user_id, context))
-        else:
-            # 单内容模式：直接设置广播内容
-            broadcast_buffers[user_id] = [serialize_message(message)]
-            
-            # 获取用户数量
-            users = get_users()
-            
-            # 显示确认界面
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ 确认发送", callback_data="confirm_broadcast")],
-                [InlineKeyboardButton("❌ 取消", callback_data="cancel_broadcast")],
-                [InlineKeyboardButton("📋 预览内容", callback_data="preview_broadcast")]
-            ])
-            
-            # 根据内容类型生成预览文本
-            if message.text:
-                preview_text = message.text[:100] + "..." if len(message.text) > 100 else message.text
-                content_type = "文本"
-            elif message.photo:
-                content_type = "图片"
-                preview_text = "图片内容"
-            elif message.video:
-                content_type = "视频"
-                preview_text = "视频内容"
-            elif message.document:
-                content_type = "文档"
-                preview_text = "文档内容"
-            else:
-                content_type = "其他"
-                preview_text = "其他类型内容"
-            
-            message_text = f"📢 广播确认\n\n"
-            message_text += f"内容类型：{content_type}\n"
-            message_text += f"内容预览：{preview_text}\n"
-            message_text += f"发送给：{len(users)} 个用户\n\n"
-            message_text += "⚠️ 此操作不可撤销，请确认！"
-            
-            await update.message.reply_text(message_text, reply_markup=keyboard)
-            
-            # 退出广播模式
-            broadcast_mode_users.discard(user_id)
-            print(f"🔍 已退出广播模式，用户ID: {user_id}")
-            
-    except Exception as e:
-        print(f"broadcast_content_handler 错误: {e}")
-        # 发送错误提示给用户
-        try:
-            await update.message.reply_text("处理广播内容时出现错误，请重试。")
-        except:
-            pass
+
 
 async def broadcast_media_group_wait_and_confirm(user_id, context):
     """等待媒体组完成并确认"""
@@ -1322,8 +1311,7 @@ def register_handlers(application):
     application.add_handler(CommandHandler("broadcast", broadcast_handler))
     application.add_handler(CommandHandler("qbzhiling", qbzhiling_handler))
     
-    # 使用两个MessageHandler，但确保正确的顺序和逻辑
-    application.add_handler(MessageHandler(filters.ALL, broadcast_content_handler))
+    # 使用单个MessageHandler处理所有消息
     application.add_handler(MessageHandler(filters.ALL, content_handler))
     
     application.add_handler(CallbackQueryHandler(finish_handler, pattern="^finish$"))
