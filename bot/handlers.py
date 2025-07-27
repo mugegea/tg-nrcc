@@ -5,12 +5,81 @@ from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 from backend.utils import save_group_to_channel, store_group_mapping, get_group_by_id, generate_link, generate_group_id
 import json
+from datetime import datetime
 INTRO_PATH = os.path.join(os.path.dirname(__file__), '..', 'storage', 'intro.txt')
 from telegram import InputMediaPhoto, InputMediaVideo
 import uuid
 BIND_CHANNELS_PATH = os.path.join(os.path.dirname(__file__), '..', 'storage', 'bind_channels.json')
 FORCE_FOLLOW_PATH = os.path.join(os.path.dirname(__file__), '..', 'storage', 'force_follow.json')
 FOLLOW_STATS_PATH = os.path.join(os.path.dirname(__file__), '..', 'storage', 'follow_stats.json')
+USERS_PATH = os.path.join(os.path.dirname(__file__), '..', 'storage', 'users.json')
+BROADCAST_HISTORY_PATH = os.path.join(os.path.dirname(__file__), '..', 'storage', 'broadcast_history.json')
+
+# 用户管理功能
+def get_users():
+    """获取所有用户列表"""
+    if os.path.exists(USERS_PATH):
+        with open(USERS_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return []
+
+def add_user(user_id, username=None, first_name=None, last_name=None):
+    """添加用户到数据库"""
+    users = get_users()
+    user_info = {
+        "user_id": user_id,
+        "username": username,
+        "first_name": first_name,
+        "last_name": last_name,
+        "joined_at": datetime.now().isoformat(),
+        "last_active": datetime.now().isoformat()
+    }
+    
+    # 检查用户是否已存在
+    existing_user = next((user for user in users if user["user_id"] == user_id), None)
+    if existing_user:
+        # 更新用户信息
+        existing_user.update(user_info)
+    else:
+        # 添加新用户
+        users.append(user_info)
+    
+    with open(USERS_PATH, 'w', encoding='utf-8') as f:
+        json.dump(users, f, ensure_ascii=False, indent=2)
+
+def update_user_activity(user_id):
+    """更新用户最后活跃时间"""
+    users = get_users()
+    for user in users:
+        if user["user_id"] == user_id:
+            user["last_active"] = datetime.now().isoformat()
+            break
+    
+    with open(USERS_PATH, 'w', encoding='utf-8') as f:
+        json.dump(users, f, ensure_ascii=False, indent=2)
+
+def get_broadcast_history():
+    """获取广播历史"""
+    if os.path.exists(BROADCAST_HISTORY_PATH):
+        with open(BROADCAST_HISTORY_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return []
+
+def save_broadcast_history(broadcast_info):
+    """保存广播历史"""
+    history = get_broadcast_history()
+    history.append(broadcast_info)
+    
+    # 只保留最近50条记录
+    if len(history) > 50:
+        history = history[-50:]
+    
+    with open(BROADCAST_HISTORY_PATH, 'w', encoding='utf-8') as f:
+        json.dump(history, f, ensure_ascii=False, indent=2)
+
+# 广播缓冲区
+broadcast_buffers = defaultdict(list)
+broadcast_media_group_buffers = defaultdict(lambda: {'media': [], 'timer': None, 'last_group_id': None})
 
 def add_bound_channel(channel_id):
     channels = get_bound_channels()
@@ -148,6 +217,16 @@ async def showchannel_handler(update, context):
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     payload = context.args[0] if context.args else None
+    
+    # 记录用户信息
+    user = update.effective_user
+    add_user(
+        user_id=user.id,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name
+    )
+    
     # 移除主菜单按钮
     if payload:
         group = get_group_by_id(payload)
@@ -643,6 +722,7 @@ COMMAND_DESCRIPTIONS = {
     '/rmbackupchannel': '移除备用频道（仅管理员）',
     '/listbackupchannels': '列出所有备用频道',
     '/forcefollow': '强制关注频道管理（仅管理员）',
+    '/broadcast': '广播消息给所有用户（仅管理员）',
     '/qbzhiling': '显示所有机器人指令及其描述',
 }
 
@@ -729,6 +809,229 @@ async def forcefollow_handler(update, context):
     else:
         await update.message.reply_text("用法：\n/forcefollow on - 开启强制关注\n/forcefollow off - 关闭强制关注\n/forcefollow set <频道ID> - 设置频道\n/forcefollow show - 显示状态\n/forcefollow stats - 查看关注统计\n/forcefollow reset - 重置统计数据")
 
+# 广播功能
+async def broadcast_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """广播消息给所有用户"""
+    user_id = update.effective_user.id
+    admin_ids = load_admin_ids()
+    if user_id not in admin_ids:
+        await update.message.reply_text("无权限，仅管理员可用。")
+        return
+    
+    if not context.args:
+        help_text = """📢 广播功能使用说明：
+
+1. 发送 /broadcast 开始广播模式
+2. 发送要广播的内容（支持文本、图片、视频等）
+3. 发送多条内容后点击"发送广播"按钮
+4. 确认后发送给所有用户
+
+💡 提示：广播前建议先使用 /broadcast_preview 预览内容"""
+        await update.message.reply_text(help_text)
+        return
+    
+    action = context.args[0].lower()
+    
+    if action == "start":
+        # 开始广播模式
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📤 发送广播", callback_data="send_broadcast")],
+            [InlineKeyboardButton("❌ 取消广播", callback_data="cancel_broadcast")]
+        ])
+        await update.message.reply_text(
+            "📢 广播模式已开启！\n\n"
+            "请发送要广播的内容（支持文本、图片、视频等），"
+            "发送完成后点击下方按钮发送给所有用户。",
+            reply_markup=keyboard
+        )
+    elif action == "preview":
+        # 预览广播内容
+        buffer = broadcast_buffers.get(user_id, [])
+        if not buffer:
+            await update.message.reply_text("❌ 没有待广播的内容，请先发送内容。")
+            return
+        
+        await update.message.reply_text("📋 广播内容预览：")
+        for i, item in enumerate(buffer, 1):
+            await send_item_to_chat(item, context.bot, update.effective_chat.id, prefix=f"[预览 {i}] ")
+    elif action == "stats":
+        # 显示用户统计
+        users = get_users()
+        total_users = len(users)
+        await update.message.reply_text(f"📊 用户统计：\n\n总用户数：{total_users} 人")
+    elif action == "history":
+        # 显示广播历史
+        history = get_broadcast_history()
+        if not history:
+            await update.message.reply_text("📝 暂无广播历史记录。")
+            return
+        
+        text = "📝 最近广播历史：\n\n"
+        for i, record in enumerate(history[-10:], 1):  # 显示最近10条
+            text += f"{i}. {record['timestamp']} - 发送给 {record['total_users']} 人，成功 {record['success_count']} 人\n"
+        await update.message.reply_text(text)
+    else:
+        await update.message.reply_text(
+            "📢 广播功能使用说明：\n\n"
+            "/broadcast start - 开始广播模式\n"
+            "/broadcast preview - 预览广播内容\n"
+            "/broadcast stats - 查看用户统计\n"
+            "/broadcast history - 查看广播历史"
+        )
+
+async def broadcast_content_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理广播内容"""
+    user_id = update.effective_user.id
+    admin_ids = load_admin_ids()
+    if user_id not in admin_ids:
+        return  # 非管理员，不处理广播内容
+    
+    message = update.message
+    media_group_id = getattr(message, 'media_group_id', None)
+    
+    if media_group_id:
+        # 收集media group
+        buf = broadcast_media_group_buffers[user_id]
+        buf['media'].append(update)
+        buf['last_group_id'] = media_group_id
+        # 重置等待定时器
+        if buf['timer']:
+            buf['timer'].cancel()
+        buf['timer'] = asyncio.create_task(broadcast_media_group_wait_and_confirm(user_id, context))
+    else:
+        broadcast_buffers[user_id].append(serialize_message(message))
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📤 发送广播", callback_data="send_broadcast")],
+            [InlineKeyboardButton("❌ 取消广播", callback_data="cancel_broadcast")]
+        ])
+        await update.message.reply_text("✅ 已添加到广播队列，继续发送或点击发送广播。", reply_markup=keyboard)
+
+async def broadcast_media_group_wait_and_confirm(user_id, context):
+    """等待媒体组完成并确认"""
+    await asyncio.sleep(2.5)  # 等待2.5秒
+    buf = broadcast_media_group_buffers[user_id]
+    
+    # 处理媒体组
+    if buf['media']:
+        media_group_id = buf['last_group_id']
+        group_items = []
+        for update in buf['media']:
+            message = update.message
+            group_items.append(serialize_message(message))
+        
+        broadcast_buffers[user_id].append({'type': 'media_group', 'items': group_items})
+        buf['media'].clear()
+        buf['timer'] = None
+        
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📤 发送广播", callback_data="send_broadcast")],
+            [InlineKeyboardButton("❌ 取消广播", callback_data="cancel_broadcast")]
+        ])
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="✅ 媒体组已添加到广播队列，继续发送或点击发送广播。",
+            reply_markup=keyboard
+        )
+
+async def broadcast_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理广播相关的回调"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    admin_ids = load_admin_ids()
+    
+    if user_id not in admin_ids:
+        await query.answer("无权限，仅管理员可用。", show_alert=True)
+        return
+    
+    if query.data == "send_broadcast":
+        buffer = broadcast_buffers.get(user_id, [])
+        if not buffer:
+            await query.answer("❌ 没有待广播的内容！", show_alert=True)
+            return
+        
+        # 确认发送
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ 确认发送", callback_data="confirm_broadcast")],
+            [InlineKeyboardButton("❌ 取消", callback_data="cancel_broadcast")]
+        ])
+        
+        users = get_users()
+        await query.edit_message_text(
+            f"📢 确认广播\n\n"
+            f"将发送给 {len(users)} 个用户\n"
+            f"内容数量：{len(buffer)} 条\n\n"
+            f"⚠️ 此操作不可撤销，请确认！",
+            reply_markup=keyboard
+        )
+    
+    elif query.data == "confirm_broadcast":
+        buffer = broadcast_buffers.get(user_id, [])
+        users = get_users()
+        
+        if not buffer or not users:
+            await query.answer("❌ 没有内容或用户！", show_alert=True)
+            return
+        
+        # 开始发送广播
+        await query.edit_message_text("📤 正在发送广播，请稍候...")
+        
+        success_count = 0
+        failed_count = 0
+        failed_users = []
+        
+        for user_info in users:
+            try:
+                user_id_target = user_info["user_id"]
+                for item in buffer:
+                    await send_item_to_chat(item, context.bot, user_id_target)
+                success_count += 1
+                # 添加延迟避免频率限制
+                await asyncio.sleep(0.1)
+            except Exception as e:
+                failed_count += 1
+                failed_users.append(f"{user_info.get('username', 'Unknown')} (ID: {user_id_target})")
+                print(f"发送给用户 {user_id_target} 失败: {e}")
+        
+        # 保存广播历史
+        broadcast_info = {
+            "timestamp": datetime.now().isoformat(),
+            "admin_id": user_id,
+            "total_users": len(users),
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "failed_users": failed_users[:10]  # 只保存前10个失败用户
+        }
+        save_broadcast_history(broadcast_info)
+        
+        # 清空缓冲区
+        broadcast_buffers[user_id].clear()
+        broadcast_media_group_buffers[user_id]['media'].clear()
+        broadcast_media_group_buffers[user_id]['timer'] = None
+        
+        # 发送结果
+        result_text = (
+            f"✅ 广播完成！\n\n"
+            f"📊 发送统计：\n"
+            f"• 总用户数：{len(users)} 人\n"
+            f"• 发送成功：{success_count} 人\n"
+            f"• 发送失败：{failed_count} 人\n"
+            f"• 成功率：{success_count/len(users)*100:.1f}%"
+        )
+        
+        if failed_users:
+            result_text += f"\n\n❌ 失败用户（前10个）：\n" + "\n".join(failed_users[:10])
+        
+        await query.edit_message_text(result_text)
+    
+    elif query.data == "cancel_broadcast":
+        # 取消广播
+        broadcast_buffers[user_id].clear()
+        broadcast_media_group_buffers[user_id]['media'].clear()
+        broadcast_media_group_buffers[user_id]['timer'] = None
+        await query.edit_message_text("❌ 广播已取消。")
+    
+    await query.answer()
+
 def register_handlers(application):
     application.add_handler(CommandHandler("start", start_handler))
     application.add_handler(CommandHandler("help", help_handler))
@@ -743,9 +1046,12 @@ def register_handlers(application):
     application.add_handler(CommandHandler("rmbackupchannel", rmbackupchannel_handler))
     application.add_handler(CommandHandler("listbackupchannels", listbackupchannels_handler))
     application.add_handler(CommandHandler("forcefollow", forcefollow_handler))
+    application.add_handler(CommandHandler("broadcast", broadcast_handler))
     application.add_handler(CommandHandler("qbzhiling", qbzhiling_handler))
     application.add_handler(MessageHandler(filters.ALL, content_handler))
+    application.add_handler(MessageHandler(filters.ALL, broadcast_content_handler))
     application.add_handler(CallbackQueryHandler(finish_handler, pattern="^finish$"))
     application.add_handler(CallbackQueryHandler(audit_handler, pattern="^(approve_|reject_).*$"))
     application.add_handler(CallbackQueryHandler(cancel_handler, pattern="^cancel$"))
-    application.add_handler(CallbackQueryHandler(button_handler, pattern="^(help|start|admin_manage|check_follow_).*$")) 
+    application.add_handler(CallbackQueryHandler(button_handler, pattern="^(help|start|admin_manage|check_follow_).*$"))
+    application.add_handler(CallbackQueryHandler(broadcast_callback_handler, pattern="^(send_broadcast|confirm_broadcast|cancel_broadcast)$")) 
