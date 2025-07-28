@@ -344,6 +344,8 @@ async def button_handler(update: Update, context):
     elif query.data == "admin_manage":
         await query.edit_message_text("管理员管理：\n请发送 /addadmin <Telegram用户ID> 来添加管理员。\n只有管理员可用。")
         await query.answer()
+    elif query.data in ["finish_signed", "finish_anonymous"]:
+        await finish_handler(update, context)
     elif query.data.startswith("check_follow_"):
         # 处理重新检查关注状态
         payload = query.data.replace("check_follow_", "")
@@ -419,7 +421,11 @@ async def content_handler(update: Update, context):
         else:
             user_buffers[user_id].append(update)
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("完成", callback_data="finish"), InlineKeyboardButton("取消", callback_data="cancel")]
+                [
+                    InlineKeyboardButton("完成", callback_data="finish_signed"),
+                    InlineKeyboardButton("匿名投稿", callback_data="finish_anonymous"),
+                    InlineKeyboardButton("取消", callback_data="cancel")
+                ]
             ])
             await update.message.reply_text("已收到，继续发送或点击完成。", reply_markup=keyboard)
     except Exception as e:
@@ -514,18 +520,40 @@ async def media_group_wait_and_confirm(user_id, context):
     buf['media'].clear()
     buf['timer'] = None
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("完成", callback_data="finish"), InlineKeyboardButton("取消", callback_data="cancel")]
+        [
+            InlineKeyboardButton("完成", callback_data="finish_signed"),
+            InlineKeyboardButton("匿名投稿", callback_data="finish_anonymous"),
+            InlineKeyboardButton("取消", callback_data="cancel")
+        ]
     ])
     # 只回复一次
     last_update = user_buffers[user_id][-1]
     await last_update.message.reply_text("已收到，继续发送或点击完成。", reply_markup=keyboard)
 
+def format_user_signature(user):
+    """格式化用户署名"""
+    if not user:
+        return ""
+
+    username = user.username
+    first_name = user.first_name or ""
+    last_name = user.last_name or ""
+
+    display_name = f"{first_name} {last_name}".strip()
+    if not display_name:
+        display_name = username or f"用户{user.id}"
+
+    if username:
+        return f"from：{display_name}（@{username}）"
+    else:
+        return f"from：{display_name}"
+
 # 修改send_group_to_channel支持多频道
-async def send_group_to_channel(grouped, bot):
+async def send_group_to_channel(grouped, bot, is_anonymous=False, user=None):
     channel_ids = get_bound_channels()
     for channel_id in channel_ids:
         for item in grouped:
-            await send_item_to_chat(item, bot, int(channel_id))
+            await send_item_to_chat(item, bot, int(channel_id), is_anonymous=is_anonymous, user=user)
 
 pending_submissions = {}  # {submission_id: {'user_id':..., 'grouped':..., 'chat_id':..., 'message_id':..., 'admin_msg_ids': {admin_id: msg_id}}}
 
@@ -533,6 +561,10 @@ async def finish_handler(update: Update, context):
     query = update.callback_query
     user_id = query.from_user.id
     admin_ids = load_admin_ids()
+    
+    # 判断是署名投稿还是匿名投稿
+    is_anonymous = query.data == "finish_anonymous"
+    user = query.from_user
     buffer = user_buffers.get(user_id, [])
     grouped = []
     i = 0
@@ -566,7 +598,7 @@ async def finish_handler(update: Update, context):
         
         try:
             # 先发送内容到频道
-            await send_group_to_channel(grouped, context.bot)
+            await send_group_to_channel(grouped, context.bot, is_anonymous=is_anonymous, user=user)
             print(f"🔍 内容已发送到频道")
             
             # 生成 group_id 并存储到数据库
@@ -606,15 +638,16 @@ async def finish_handler(update: Update, context):
             'grouped': grouped,
             'chat_id': query.message.chat_id,
             'message_id': query.message.message_id,
-            'admin_msg_ids': {}
+            'admin_msg_ids': {},
+            'is_anonymous': is_anonymous
         }
         admin_ids = load_admin_ids()
         for admin_id in admin_ids:
-            msg_id = await send_group_to_admin_for_review(grouped, context.bot, admin_id, submission_id, user_id)
+            msg_id = await send_group_to_admin_for_review(grouped, context.bot, admin_id, submission_id, user_id, is_anonymous=is_anonymous)
             pending_submissions[submission_id]['admin_msg_ids'][admin_id] = msg_id
         await query.answer()
 
-async def send_group_to_admin_for_review(grouped, bot, admin_id, submission_id, user_id):
+async def send_group_to_admin_for_review(grouped, bot, admin_id, submission_id, user_id, is_anonymous=False):
     # 获取用户名
     user = await bot.get_chat(user_id)
     username = user.username if hasattr(user, 'username') and user.username else None
@@ -623,7 +656,8 @@ async def send_group_to_admin_for_review(grouped, bot, admin_id, submission_id, 
     else:
         user_display = f"ID:{user_id}"
     # 先发一条文本消息带审核按钮
-    review_text = f"\u2728 <b>投稿审核</b>\n用户: {user_display}\n\n请审核以下内容："
+    anonymous_status = "匿名投稿" if is_anonymous else "署名投稿"
+    review_text = f"\u2728 <b>投稿审核</b>\n用户: {user_display}\n类型: {anonymous_status}\n\n请审核以下内容："
     reply_markup = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✅ 通过", callback_data=f"approve_{submission_id}"),
@@ -633,7 +667,7 @@ async def send_group_to_admin_for_review(grouped, bot, admin_id, submission_id, 
     sent = await bot.send_message(chat_id=admin_id, text=review_text, reply_markup=reply_markup, parse_mode='HTML')
     # 再推送内容本体
     for item in grouped:
-        await send_item_to_chat(item, bot, admin_id)
+        await send_item_to_chat(item, bot, admin_id, is_anonymous=is_anonymous, user=user)
     return sent.message_id
 
 async def audit_handler(update: Update, context):
@@ -675,7 +709,11 @@ async def audit_handler(update: Update, context):
             except Exception:
                 pass
         if action == '通过':
-            await send_group_to_channel(grouped, context.bot)
+            # 从submission中获取匿名状态
+            submission_data = pending_submissions.get(submission_id, {})
+            is_anonymous = submission_data.get('is_anonymous', False)
+            user = await context.bot.get_chat(user_id)
+            await send_group_to_channel(grouped, context.bot, is_anonymous=is_anonymous, user=user)
             group_id = generate_group_id()
             store_group_mapping(group_id, grouped)
             link = generate_link(group_id)
@@ -728,33 +766,70 @@ async def restore_group_to_user(group, bot, chat_id):
     for item in group['items']:
         await send_item_to_chat(item, bot, chat_id)
 
-async def send_item_to_chat(item, bot, chat_id, reply_markup=None, prefix=None):
+async def send_item_to_chat(item, bot, chat_id, reply_markup=None, prefix=None, is_anonymous=False, user=None):
     from telegram import InputMediaPhoto, InputMediaVideo
     if item['type'] == 'media_group':
         media = []
-        for m in item['items']:
+        for i, m in enumerate(item['items']):
+            caption = m.get('caption') or ""
+            # 只在最后一个媒体项添加签名（如果不是匿名投稿）
+            if not is_anonymous and user and i == len(item['items']) - 1:
+                signature = format_user_signature(user)
+                if signature:
+                    caption = f"{caption}\n\n{signature}" if caption else signature
+            
             if m['type'] == 'photo':
-                media.append(InputMediaPhoto(media=m['file_id'], caption=m.get('caption')))
+                media.append(InputMediaPhoto(media=m['file_id'], caption=caption))
             elif m['type'] == 'video':
-                media.append(InputMediaVideo(media=m['file_id'], caption=m.get('caption')))
+                media.append(InputMediaVideo(media=m['file_id'], caption=caption))
         if media:
             await bot.send_media_group(chat_id, media)
     elif item['type'] == 'photo':
-        await bot.send_photo(chat_id, item['file_id'], caption=(prefix or '') + (item.get('caption') or '') if prefix or item.get('caption') else None, reply_markup=reply_markup)
+        caption = (prefix or '') + (item.get('caption') or '')
+        if not is_anonymous and user:
+            signature = format_user_signature(user)
+            if signature:
+                caption = f"{caption}\n\n{signature}" if caption else signature
+        await bot.send_photo(chat_id, item['file_id'], caption=caption if caption else None, reply_markup=reply_markup)
     elif item['type'] == 'video':
-        await bot.send_video(chat_id, item['file_id'], caption=(prefix or '') + (item.get('caption') or '') if prefix or item.get('caption') else None, reply_markup=reply_markup)
+        caption = (prefix or '') + (item.get('caption') or '')
+        if not is_anonymous and user:
+            signature = format_user_signature(user)
+            if signature:
+                caption = f"{caption}\n\n{signature}" if caption else signature
+        await bot.send_video(chat_id, item['file_id'], caption=caption if caption else None, reply_markup=reply_markup)
     elif item['type'] == 'text':
-        await bot.send_message(chat_id, (prefix or '') + item['text'], reply_markup=reply_markup)
+        text = (prefix or '') + item['text']
+        if not is_anonymous and user:
+            signature = format_user_signature(user)
+            if signature:
+                text = f"{text}\n\n{signature}"
+        await bot.send_message(chat_id, text, reply_markup=reply_markup)
     elif item['type'] == 'document':
-        await bot.send_document(chat_id, item['file_id'], caption=(prefix or '') + (item.get('caption') or '') if prefix or item.get('caption') else None, filename=item.get('file_name'), reply_markup=reply_markup)
+        caption = (prefix or '') + (item.get('caption') or '')
+        if not is_anonymous and user:
+            signature = format_user_signature(user)
+            if signature:
+                caption = f"{caption}\n\n{signature}" if caption else signature
+        await bot.send_document(chat_id, item['file_id'], caption=caption if caption else None, filename=item.get('file_name'), reply_markup=reply_markup)
     elif item['type'] == 'audio':
-        await bot.send_audio(chat_id, item['file_id'], caption=(prefix or '') + (item.get('caption') or '') if prefix or item.get('caption') else None, reply_markup=reply_markup)
+        caption = (prefix or '') + (item.get('caption') or '')
+        if not is_anonymous and user:
+            signature = format_user_signature(user)
+            if signature:
+                caption = f"{caption}\n\n{signature}" if caption else signature
+        await bot.send_audio(chat_id, item['file_id'], caption=caption if caption else None, reply_markup=reply_markup)
     elif item['type'] == 'voice':
         await bot.send_voice(chat_id, item['file_id'], reply_markup=reply_markup)
     elif item['type'] == 'sticker':
         await bot.send_sticker(chat_id, item['file_id'], reply_markup=reply_markup)
     elif item['type'] == 'animation':
-        await bot.send_animation(chat_id, item['file_id'], caption=(prefix or '') + (item.get('caption') or '') if prefix or item.get('caption') else None, reply_markup=reply_markup)
+        caption = (prefix or '') + (item.get('caption') or '')
+        if not is_anonymous and user:
+            signature = format_user_signature(user)
+            if signature:
+                caption = f"{caption}\n\n{signature}" if caption else signature
+        await bot.send_animation(chat_id, item['file_id'], caption=caption if caption else None, reply_markup=reply_markup)
     elif item['type'] == 'location':
         await bot.send_location(chat_id, item['latitude'], item['longitude'], reply_markup=reply_markup)
     elif item['type'] == 'contact':
@@ -1323,7 +1398,7 @@ def register_handlers(application):
     # 使用单个MessageHandler处理所有消息
     application.add_handler(MessageHandler(filters.ALL, content_handler))
     
-    application.add_handler(CallbackQueryHandler(finish_handler, pattern="^finish$"))
+    application.add_handler(CallbackQueryHandler(finish_handler, pattern="^(finish_signed|finish_anonymous)$"))
     application.add_handler(CallbackQueryHandler(audit_handler, pattern="^(approve_|reject_).*$"))
     application.add_handler(CallbackQueryHandler(cancel_handler, pattern="^cancel$"))
     application.add_handler(CallbackQueryHandler(button_handler, pattern="^(help|start|admin_manage|check_follow_).*$"))
