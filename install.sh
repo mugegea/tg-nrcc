@@ -15,6 +15,11 @@ FOLLOW_STATS_PATH = os.path.join(os.path.dirname(__file__), '..', 'storage', 'fo
 USERS_PATH = os.path.join(os.path.dirname(__file__), '..', 'storage', 'users.json')
 BROADCAST_HISTORY_PATH = os.path.join(os.path.dirname(__file__), '..', 'storage', 'broadcast_history.json')
 
+# 静态频道ID到用户名映射（优先使用）
+channel_id_to_username = {
+    "-1002713959876": "quweibb"
+}
+
 # 用户管理功能
 def get_users():
     """获取所有用户列表"""
