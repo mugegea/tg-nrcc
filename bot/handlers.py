@@ -355,6 +355,46 @@ async def button_handler(update: Update, context):
         else:
             await query.edit_message_text("❌ 当前没有等待输入的拒绝原因。")
         await query.answer()
+    elif query.data.startswith("add_tags_"):
+        # 处理添加标签
+        user_id = query.from_user.id
+        admin_ids = load_admin_ids()
+        if user_id not in admin_ids:
+            await query.answer("无权限，仅管理员可用。", show_alert=True)
+            return
+        
+        submission_id = query.data.split('_', 2)[2]
+        
+        # 设置等待输入标签的状态
+        tag_input_states[user_id] = {
+            'submission_id': submission_id,
+            'waiting_for_tags': True
+        }
+        
+        # 显示常用标签和输入提示
+        common_tags_text = ' '.join(COMMON_TAGS[:10])  # 显示前10个常用标签
+        await query.edit_message_text(
+            f"🏷️ 请输入标签：\n\n"
+            f"💡 常用标签：{common_tags_text}\n\n"
+            f"📝 输入格式：\n"
+            f"• 空格分隔：美食 新闻 科技\n"
+            f"• 逗号分隔：美食,新闻,科技\n"
+            f"• 自动添加#：输入'美食'会自动变成'#美食'\n\n"
+            f"请直接发送标签，发送 /cancel_tags 可取消操作。",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ 取消", callback_data="cancel_tags")]
+            ])
+        )
+        await query.answer()
+    elif query.data == "cancel_tags":
+        # 取消标签输入
+        user_id = query.from_user.id
+        if user_id in tag_input_states:
+            del tag_input_states[user_id]
+            await query.edit_message_text("✅ 已取消标签输入。")
+        else:
+            await query.edit_message_text("❌ 当前没有等待输入的标签。")
+        await query.answer()
     elif query.data.startswith("check_follow_"):
         # 处理重新检查关注状态
         payload = query.data.replace("check_follow_", "")
@@ -409,6 +449,12 @@ async def content_handler(update: Update, context):
         if user_id in admin_ids and user_id in rejection_reason_states and rejection_reason_states[user_id].get('waiting_for_reason'):
             print(f"🔍 管理员在输入拒绝原因")
             await handle_rejection_reason(update, context)
+            return
+        
+        # 检查是否是管理员在输入标签
+        if user_id in admin_ids and user_id in tag_input_states and tag_input_states[user_id].get('waiting_for_tags'):
+            print(f"🔍 管理员在输入标签")
+            await handle_tag_input(update, context)
             return
         
         print(f"🔍 content_handler 开始处理普通内容")
@@ -564,16 +610,22 @@ def format_user_signature(user):
         return f"from：{display_name}"
 
 # 修改send_group_to_channel支持多频道
-async def send_group_to_channel(grouped, bot, is_anonymous=False, user=None):
+async def send_group_to_channel(grouped, bot, is_anonymous=False, user=None, tags=None):
     channel_ids = get_bound_channels()
     for channel_id in channel_ids:
         for item in grouped:
-            await send_item_to_chat(item, bot, int(channel_id), is_anonymous=is_anonymous, user=user)
+            await send_item_to_chat(item, bot, int(channel_id), is_anonymous=is_anonymous, user=user, tags=tags)
 
 pending_submissions = {}  # {submission_id: {'user_id':..., 'grouped':..., 'chat_id':..., 'message_id':..., 'admin_msg_ids': {admin_id: msg_id}}}
 
 # 拒绝原因输入状态管理
 rejection_reason_states = {}  # {admin_id: {'submission_id': ..., 'waiting_for_reason': True}}
+
+# 标签输入状态管理
+tag_input_states = {}  # {admin_id: {'submission_id': ..., 'waiting_for_tags': True}}
+
+# 常用标签列表
+COMMON_TAGS = ["#美食", "#新闻", "#科技", "#娱乐", "#体育", "#教育", "#健康", "#旅游", "#时尚", "#游戏", "#音乐", "#电影", "#书籍", "#生活", "#搞笑", "#萌宠", "#风景", "#美食", "#手工", "#教程"]
 
 async def finish_handler(update: Update, context):
     query = update.callback_query
@@ -616,7 +668,7 @@ async def finish_handler(update: Update, context):
         
         try:
             # 先发送内容到频道
-            await send_group_to_channel(grouped, context.bot, is_anonymous=is_anonymous, user=user)
+            await send_group_to_channel(grouped, context.bot, is_anonymous=is_anonymous, user=user, tags=grouped.get('tags'))
             print(f"🔍 内容已发送到频道")
             
             # 生成 group_id 并存储到数据库
@@ -661,11 +713,11 @@ async def finish_handler(update: Update, context):
         }
         admin_ids = load_admin_ids()
         for admin_id in admin_ids:
-            msg_id = await send_group_to_admin_for_review(grouped, context.bot, admin_id, submission_id, user_id, is_anonymous=is_anonymous)
+            msg_id = await send_group_to_admin_for_review(grouped, context.bot, admin_id, submission_id, user_id, is_anonymous=is_anonymous, tags=grouped.get('tags'))
             pending_submissions[submission_id]['admin_msg_ids'][admin_id] = msg_id
         await query.answer()
 
-async def send_group_to_admin_for_review(grouped, bot, admin_id, submission_id, user_id, is_anonymous=False):
+async def send_group_to_admin_for_review(grouped, bot, admin_id, submission_id, user_id, is_anonymous=False, tags=None):
     # 获取用户名
     user = await bot.get_chat(user_id)
     username = user.username if hasattr(user, 'username') and user.username else None
@@ -683,12 +735,15 @@ async def send_group_to_admin_for_review(grouped, bot, admin_id, submission_id, 
         ],
         [
             InlineKeyboardButton("❌ 拒绝并说明原因", callback_data=f"reject_with_reason_{submission_id}")
+        ],
+        [
+            InlineKeyboardButton("🏷️ 添加标签", callback_data=f"add_tags_{submission_id}")
         ]
     ])
     sent = await bot.send_message(chat_id=admin_id, text=review_text, reply_markup=reply_markup, parse_mode='HTML')
     # 再推送内容本体
     for item in grouped:
-        await send_item_to_chat(item, bot, admin_id, is_anonymous=is_anonymous, user=user)
+        await send_item_to_chat(item, bot, admin_id, is_anonymous=is_anonymous, user=user, tags=tags)
     return sent.message_id
 
 async def audit_handler(update: Update, context):
@@ -749,11 +804,12 @@ async def audit_handler(update: Update, context):
             except Exception:
                 pass
         if action == '通过':
-            # 从submission中获取匿名状态
+            # 从submission中获取匿名状态和标签
             submission_data = pending_submissions.get(submission_id, {})
             is_anonymous = submission_data.get('is_anonymous', False)
+            tags = submission_data.get('tags', [])
             user = await context.bot.get_chat(user_id)
-            await send_group_to_channel(grouped, context.bot, is_anonymous=is_anonymous, user=user)
+            await send_group_to_channel(grouped, context.bot, is_anonymous=is_anonymous, user=user, tags=tags)
             group_id = generate_group_id()
             store_group_mapping(group_id, grouped)
             link = generate_link(group_id)
@@ -846,6 +902,76 @@ async def handle_rejection_reason(update: Update, context):
     except:
         pass
 
+async def handle_tag_input(update: Update, context):
+    """处理管理员输入的标签"""
+    user_id = update.effective_user.id
+    admin_ids = load_admin_ids()
+    
+    if user_id not in admin_ids:
+        return
+    
+    # 检查是否在等待输入标签的状态
+    if user_id not in tag_input_states or not tag_input_states[user_id].get('waiting_for_tags'):
+        return
+    
+    submission_id = tag_input_states[user_id]['submission_id']
+    tags_input = update.message.text
+    
+    # 解析标签（支持空格分隔或逗号分隔）
+    tags = []
+    if ',' in tags_input:
+        tags = [tag.strip() for tag in tags_input.split(',') if tag.strip()]
+    else:
+        tags = [tag.strip() for tag in tags_input.split() if tag.strip()]
+    
+    # 确保标签格式正确（以#开头）
+    formatted_tags = []
+    for tag in tags:
+        if not tag.startswith('#'):
+            tag = '#' + tag
+        formatted_tags.append(tag)
+    
+    if not formatted_tags:
+        await update.message.reply_text("❌ 请输入有效的标签，例如：#美食 #新闻")
+        return
+    
+    # 获取投稿信息
+    submission = pending_submissions.get(submission_id, None)
+    if not submission:
+        await update.message.reply_text("❌ 该投稿已被处理或已过期。")
+        # 清除状态
+        if user_id in tag_input_states:
+            del tag_input_states[user_id]
+        return
+    
+    # 添加标签到投稿数据
+    submission['tags'] = formatted_tags
+    
+    # 获取管理员信息
+    admin_user = await context.bot.get_chat(user_id)
+    admin_username = admin_user.username if hasattr(admin_user, 'username') and admin_user.username else None
+    if admin_username:
+        admin_display = f"@{admin_username} (ID:{user_id})"
+    else:
+        admin_display = f"ID:{user_id}"
+    
+    # 通知管理员标签已添加
+    tags_text = ' '.join(formatted_tags)
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=f"✅ 已为投稿添加标签：{tags_text}\n\n请继续审核该投稿。"
+    )
+    
+    # 清除状态
+    if user_id in tag_input_states:
+        del tag_input_states[user_id]
+    
+    # 删除管理员的输入消息
+    try:
+        await update.message.delete()
+    except:
+        pass
+
 # 序列化所有主流类型
 
 def serialize_message(m):
@@ -883,7 +1009,7 @@ async def restore_group_to_user(group, bot, chat_id):
     for item in group['items']:
         await send_item_to_chat(item, bot, chat_id)
 
-async def send_item_to_chat(item, bot, chat_id, reply_markup=None, prefix=None, is_anonymous=False, user=None):
+async def send_item_to_chat(item, bot, chat_id, reply_markup=None, prefix=None, is_anonymous=False, user=None, tags=None):
     from telegram import InputMediaPhoto, InputMediaVideo
     if item['type'] == 'media_group':
         media = []
@@ -894,6 +1020,11 @@ async def send_item_to_chat(item, bot, chat_id, reply_markup=None, prefix=None, 
                 signature = format_user_signature(user)
                 if signature:
                     caption = f"{caption}\n\n{signature}" if caption else signature
+            
+            # 添加标签（只在最后一个媒体项）
+            if tags and i == len(item['items']) - 1:
+                tags_text = ' '.join(tags)
+                caption = f"{caption}\n\n{tags_text}" if caption else tags_text
             
             if m['type'] == 'photo':
                 media.append(InputMediaPhoto(media=m['file_id'], caption=caption))
@@ -907,6 +1038,12 @@ async def send_item_to_chat(item, bot, chat_id, reply_markup=None, prefix=None, 
             signature = format_user_signature(user)
             if signature:
                 caption = f"{caption}\n\n{signature}" if caption else signature
+        
+        # 添加标签
+        if tags:
+            tags_text = ' '.join(tags)
+            caption = f"{caption}\n\n{tags_text}" if caption else tags_text
+        
         await bot.send_photo(chat_id, item['file_id'], caption=caption if caption else None, reply_markup=reply_markup)
     elif item['type'] == 'video':
         caption = (prefix or '') + (item.get('caption') or '')
@@ -914,6 +1051,12 @@ async def send_item_to_chat(item, bot, chat_id, reply_markup=None, prefix=None, 
             signature = format_user_signature(user)
             if signature:
                 caption = f"{caption}\n\n{signature}" if caption else signature
+        
+        # 添加标签
+        if tags:
+            tags_text = ' '.join(tags)
+            caption = f"{caption}\n\n{tags_text}" if caption else tags_text
+        
         await bot.send_video(chat_id, item['file_id'], caption=caption if caption else None, reply_markup=reply_markup)
     elif item['type'] == 'text':
         text = (prefix or '') + item['text']
@@ -921,6 +1064,12 @@ async def send_item_to_chat(item, bot, chat_id, reply_markup=None, prefix=None, 
             signature = format_user_signature(user)
             if signature:
                 text = f"{text}\n\n{signature}"
+        
+        # 添加标签
+        if tags:
+            tags_text = ' '.join(tags)
+            text = f"{text}\n\n{tags_text}"
+        
         await bot.send_message(chat_id, text, reply_markup=reply_markup)
     elif item['type'] == 'document':
         caption = (prefix or '') + (item.get('caption') or '')
@@ -928,6 +1077,12 @@ async def send_item_to_chat(item, bot, chat_id, reply_markup=None, prefix=None, 
             signature = format_user_signature(user)
             if signature:
                 caption = f"{caption}\n\n{signature}" if caption else signature
+        
+        # 添加标签
+        if tags:
+            tags_text = ' '.join(tags)
+            caption = f"{caption}\n\n{tags_text}" if caption else tags_text
+        
         await bot.send_document(chat_id, item['file_id'], caption=caption if caption else None, filename=item.get('file_name'), reply_markup=reply_markup)
     elif item['type'] == 'audio':
         caption = (prefix or '') + (item.get('caption') or '')
@@ -935,6 +1090,12 @@ async def send_item_to_chat(item, bot, chat_id, reply_markup=None, prefix=None, 
             signature = format_user_signature(user)
             if signature:
                 caption = f"{caption}\n\n{signature}" if caption else signature
+        
+        # 添加标签
+        if tags:
+            tags_text = ' '.join(tags)
+            caption = f"{caption}\n\n{tags_text}" if caption else tags_text
+        
         await bot.send_audio(chat_id, item['file_id'], caption=caption if caption else None, reply_markup=reply_markup)
     elif item['type'] == 'voice':
         await bot.send_voice(chat_id, item['file_id'], reply_markup=reply_markup)
@@ -946,6 +1107,12 @@ async def send_item_to_chat(item, bot, chat_id, reply_markup=None, prefix=None, 
             signature = format_user_signature(user)
             if signature:
                 caption = f"{caption}\n\n{signature}" if caption else signature
+        
+        # 添加标签
+        if tags:
+            tags_text = ' '.join(tags)
+            caption = f"{caption}\n\n{tags_text}" if caption else tags_text
+        
         await bot.send_animation(chat_id, item['file_id'], caption=caption if caption else None, reply_markup=reply_markup)
     elif item['type'] == 'location':
         await bot.send_location(chat_id, item['latitude'], item['longitude'], reply_markup=reply_markup)
@@ -1079,6 +1246,21 @@ async def cancel_reason_handler(update, context):
         await update.message.reply_text("✅ 已取消拒绝原因输入。")
     else:
         await update.message.reply_text("❌ 当前没有等待输入的拒绝原因。")
+
+async def cancel_tags_handler(update, context):
+    """取消标签输入"""
+    user_id = update.effective_user.id
+    admin_ids = load_admin_ids()
+    
+    if user_id not in admin_ids:
+        await update.message.reply_text("无权限，仅管理员可用。")
+        return
+    
+    if user_id in tag_input_states:
+        del tag_input_states[user_id]
+        await update.message.reply_text("✅ 已取消标签输入。")
+    else:
+        await update.message.reply_text("❌ 当前没有等待输入的标签。")
 
 async def qbzhiling_handler(update, context):
     text = '【机器人指令列表】\n'
@@ -1527,6 +1709,7 @@ def register_handlers(application):
     application.add_handler(CommandHandler("broadcast", broadcast_handler))
     application.add_handler(CommandHandler("qbzhiling", qbzhiling_handler))
     application.add_handler(CommandHandler("cancel_reason", cancel_reason_handler))
+    application.add_handler(CommandHandler("cancel_tags", cancel_tags_handler))
     
     # 使用单个MessageHandler处理所有消息
     application.add_handler(MessageHandler(filters.ALL, content_handler))
