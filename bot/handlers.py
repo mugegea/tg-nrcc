@@ -711,13 +711,28 @@ async def finish_handler(update: Update, context):
             'admin_msg_ids': {},
             'is_anonymous': is_anonymous
         }
+        
+        # 添加调试信息
+        print(f"🔍 用户投稿 - 用户ID: {user_id}")
+        print(f"🔍 管理员列表: {admin_ids}")
+        print(f"🔍 投稿ID: {submission_id}")
+        print(f"🔍 内容数量: {len(grouped)}")
+        
         admin_ids = load_admin_ids()
         for admin_id in admin_ids:
-            msg_id = await send_group_to_admin_for_review(grouped, context.bot, admin_id, submission_id, user_id, is_anonymous=is_anonymous, tags=grouped.get('tags'))
-            pending_submissions[submission_id]['admin_msg_ids'][admin_id] = msg_id
+            try:
+                print(f"🔍 正在发送给管理员: {admin_id}")
+                msg_id = await send_group_to_admin_for_review(grouped, context.bot, admin_id, submission_id, user_id, is_anonymous=is_anonymous, tags=None)
+                pending_submissions[submission_id]['admin_msg_ids'][admin_id] = msg_id
+                print(f"🔍 成功发送给管理员 {admin_id}, 消息ID: {msg_id}")
+            except Exception as e:
+                print(f"🔍 发送给管理员 {admin_id} 失败: {e}")
+        
         await query.answer()
 
 async def send_group_to_admin_for_review(grouped, bot, admin_id, submission_id, user_id, is_anonymous=False, tags=None):
+    print(f"🔍 send_group_to_admin_for_review 开始 - 管理员ID: {admin_id}")
+    
     # 获取用户名
     user = await bot.get_chat(user_id)
     username = user.username if hasattr(user, 'username') and user.username else None
@@ -725,6 +740,7 @@ async def send_group_to_admin_for_review(grouped, bot, admin_id, submission_id, 
         user_display = f'@{username} (ID:{user_id})'
     else:
         user_display = f"ID:{user_id}"
+    
     # 先发一条文本消息带审核按钮
     anonymous_status = "匿名投稿" if is_anonymous else "署名投稿"
     review_text = f"\u2728 <b>投稿审核</b>\n用户: {user_display}\n类型: {anonymous_status}\n\n请审核以下内容："
@@ -740,11 +756,23 @@ async def send_group_to_admin_for_review(grouped, bot, admin_id, submission_id, 
             InlineKeyboardButton("🏷️ 添加标签", callback_data=f"add_tags_{submission_id}")
         ]
     ])
-    sent = await bot.send_message(chat_id=admin_id, text=review_text, reply_markup=reply_markup, parse_mode='HTML')
-    # 再推送内容本体
-    for item in grouped:
-        await send_item_to_chat(item, bot, admin_id, is_anonymous=is_anonymous, user=user, tags=tags)
-    return sent.message_id
+    try:
+        sent = await bot.send_message(chat_id=admin_id, text=review_text, reply_markup=reply_markup, parse_mode='HTML')
+        print(f"🔍 审核消息已发送给管理员 {admin_id}")
+        
+        # 再推送内容本体
+        for i, item in enumerate(grouped):
+            try:
+                await send_item_to_chat(item, bot, admin_id, is_anonymous=is_anonymous, user=user, tags=tags)
+                print(f"🔍 内容项 {i+1}/{len(grouped)} 已发送给管理员 {admin_id}")
+            except Exception as e:
+                print(f"🔍 发送内容项 {i+1} 给管理员 {admin_id} 失败: {e}")
+        
+        print(f"🔍 send_group_to_admin_for_review 完成 - 管理员ID: {admin_id}")
+        return sent.message_id
+    except Exception as e:
+        print(f"🔍 send_group_to_admin_for_review 失败 - 管理员ID: {admin_id}, 错误: {e}")
+        raise e
 
 async def audit_handler(update: Update, context):
     query = update.callback_query
@@ -805,9 +833,8 @@ async def audit_handler(update: Update, context):
                 pass
         if action == '通过':
             # 从submission中获取匿名状态和标签
-            submission_data = pending_submissions.get(submission_id, {})
-            is_anonymous = submission_data.get('is_anonymous', False)
-            tags = submission_data.get('tags', [])
+            is_anonymous = submission.get('is_anonymous', False)
+            tags = submission.get('tags', [])
             user = await context.bot.get_chat(user_id)
             await send_group_to_channel(grouped, context.bot, is_anonymous=is_anonymous, user=user, tags=tags)
             group_id = generate_group_id()
