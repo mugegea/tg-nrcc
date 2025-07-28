@@ -1922,11 +1922,23 @@ def register_handlers(application):
     application.add_handler(CommandHandler("qbzhiling", qbzhiling_handler))
     application.add_handler(CommandHandler("cancel_reason", cancel_reason_handler))
     
-    # 使用单个MessageHandler处理所有消息
-    application.add_handler(MessageHandler(filters.ALL, content_handler))
-    
     application.add_handler(CallbackQueryHandler(finish_handler, pattern="^(finish_signed|finish_anonymous)$"))
     application.add_handler(CallbackQueryHandler(audit_handler, pattern="^(approve_|reject_).*$"))
     application.add_handler(CallbackQueryHandler(cancel_handler, pattern="^cancel$"))
     application.add_handler(CallbackQueryHandler(button_handler, pattern="^(help|start|admin_manage|check_follow_|add_tags_|remove_tags_|cancel_tags|cancel_reason).*$"))
-    application.add_handler(CallbackQueryHandler(broadcast_callback_handler, pattern="^(confirm_broadcast|cancel_broadcast|preview_broadcast|send_notification|cancel_notification)$")) 
+    application.add_handler(CallbackQueryHandler(broadcast_callback_handler, pattern="^(confirm_broadcast|cancel_broadcast|preview_broadcast|send_notification|cancel_notification)$"))
+    
+    # 使用MessageHandler处理非命令消息（放在最后，避免拦截命令）
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, content_handler))
+    application.add_handler(MessageHandler(filters.PHOTO, content_handler))
+    application.add_handler(MessageHandler(filters.VIDEO, content_handler))
+    application.add_handler(MessageHandler(filters.DOCUMENT, content_handler))
+    application.add_handler(MessageHandler(filters.AUDIO, content_handler))
+    application.add_handler(MessageHandler(filters.VOICE, content_handler))
+    application.add_handler(MessageHandler(filters.STICKER, content_handler))
+    application.add_handler(MessageHandler(filters.ANIMATION, content_handler))
+    application.add_handler(MessageHandler(filters.LOCATION, content_handler))
+    application.add_handler(MessageHandler(filters.CONTACT, content_handler))
+    application.add_handler(MessageHandler(filters.POLL, content_handler))
+    application.add_handler(MessageHandler(filters.DICE, content_handler))
+    application.add_handler(MessageHandler(filters.VIDEO_NOTE, content_handler)) 
