@@ -350,8 +350,48 @@ async def button_handler(update: Update, context):
         # 取消拒绝原因输入
         user_id = query.from_user.id
         if user_id in rejection_reason_states:
+            submission_id = rejection_reason_states[user_id]['submission_id']
             del rejection_reason_states[user_id]
-            await query.edit_message_text("✅ 已取消拒绝原因输入。")
+            
+            # 获取投稿信息
+            submission = pending_submissions.get(submission_id, None)
+            if submission:
+                # 返回到审核界面
+                grouped = submission['grouped']
+                user_id_target = submission['user_id']
+                is_anonymous = submission.get('is_anonymous', False)
+                tags = submission.get('tags', [])
+                
+                # 获取用户信息
+                user = await context.bot.get_chat(user_id_target)
+                user_display = f'@{user.username}' if user.username else f"ID:{user_id_target}"
+                anonymous_status = "匿名投稿" if is_anonymous else "署名投稿"
+                
+                review_text = f"\u2728 <b>投稿审核</b>\n用户: {user_display}\n类型: {anonymous_status}"
+                if tags:
+                    review_text += f"\n标签: {' '.join(tags)}"
+                review_text += "\n\n请审核以下内容："
+                
+                reply_markup = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("✅ 通过", callback_data=f"approve_{submission_id}"),
+                        InlineKeyboardButton("❌ 拒绝", callback_data=f"reject_{submission_id}")
+                    ],
+                    [
+                        InlineKeyboardButton("❌ 拒绝并说明原因", callback_data=f"reject_with_reason_{submission_id}")
+                    ],
+                    [
+                        InlineKeyboardButton("🏷️ 添加标签", callback_data=f"add_tags_{submission_id}")
+                    ]
+                ])
+                
+                await query.edit_message_text(
+                    text=review_text,
+                    reply_markup=reply_markup,
+                    parse_mode='HTML'
+                )
+            else:
+                await query.edit_message_text("❌ 投稿已不存在。")
         else:
             await query.edit_message_text("❌ 当前没有等待输入的拒绝原因。")
         await query.answer()
@@ -390,8 +430,48 @@ async def button_handler(update: Update, context):
         # 取消标签输入
         user_id = query.from_user.id
         if user_id in tag_input_states:
+            submission_id = tag_input_states[user_id]['submission_id']
             del tag_input_states[user_id]
-            await query.edit_message_text("✅ 已取消标签输入。")
+            
+            # 获取投稿信息
+            submission = pending_submissions.get(submission_id, None)
+            if submission:
+                # 返回到审核界面
+                grouped = submission['grouped']
+                user_id_target = submission['user_id']
+                is_anonymous = submission.get('is_anonymous', False)
+                tags = submission.get('tags', [])
+                
+                # 获取用户信息
+                user = await context.bot.get_chat(user_id_target)
+                user_display = f'@{user.username}' if user.username else f"ID:{user_id_target}"
+                anonymous_status = "匿名投稿" if is_anonymous else "署名投稿"
+                
+                review_text = f"\u2728 <b>投稿审核</b>\n用户: {user_display}\n类型: {anonymous_status}"
+                if tags:
+                    review_text += f"\n标签: {' '.join(tags)}"
+                review_text += "\n\n请审核以下内容："
+                
+                reply_markup = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("✅ 通过", callback_data=f"approve_{submission_id}"),
+                        InlineKeyboardButton("❌ 拒绝", callback_data=f"reject_{submission_id}")
+                    ],
+                    [
+                        InlineKeyboardButton("❌ 拒绝并说明原因", callback_data=f"reject_with_reason_{submission_id}")
+                    ],
+                    [
+                        InlineKeyboardButton("🏷️ 添加标签", callback_data=f"add_tags_{submission_id}")
+                    ]
+                ])
+                
+                await query.edit_message_text(
+                    text=review_text,
+                    reply_markup=reply_markup,
+                    parse_mode='HTML'
+                )
+            else:
+                await query.edit_message_text("❌ 投稿已不存在。")
         else:
             await query.edit_message_text("❌ 当前没有等待输入的标签。")
         await query.answer()
@@ -989,10 +1069,42 @@ async def handle_tag_input(update: Update, context):
     
     # 通知管理员标签已添加
     tags_text = ' '.join(formatted_tags)
+    
+    # 获取投稿信息
+    grouped = submission['grouped']
+    user_id_target = submission['user_id']
+    is_anonymous = submission.get('is_anonymous', False)
+    
+    # 获取投稿用户信息
+    user = await context.bot.get_chat(user_id_target)
+    user_display = f'@{user.username}' if user.username else f"ID:{user_id_target}"
+    anonymous_status = "匿名投稿" if is_anonymous else "署名投稿"
+    review_text = f"\u2728 <b>投稿审核</b>\n用户: {user_display}\n类型: {anonymous_status}\n标签: {tags_text}\n\n请审核以下内容："
+    
+    reply_markup = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ 通过", callback_data=f"approve_{submission_id}"),
+            InlineKeyboardButton("❌ 拒绝", callback_data=f"reject_{submission_id}")
+        ],
+        [
+            InlineKeyboardButton("❌ 拒绝并说明原因", callback_data=f"reject_with_reason_{submission_id}")
+        ],
+        [
+            InlineKeyboardButton("🏷️ 修改标签", callback_data=f"add_tags_{submission_id}")
+        ]
+    ])
+    
+    # 发送新的审核界面
     await context.bot.send_message(
         chat_id=user_id,
-        text=f"✅ 已为投稿添加标签：{tags_text}\n\n请继续审核该投稿。"
+        text=review_text,
+        reply_markup=reply_markup,
+        parse_mode='HTML'
     )
+    
+    # 重新发送内容（带标签）
+    for item in grouped:
+        await send_item_to_chat(item, context.bot, user_id, is_anonymous=is_anonymous, user=user, tags=formatted_tags)
     
     # 清除状态
     if user_id in tag_input_states:
