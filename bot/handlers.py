@@ -1928,5 +1928,5 @@ def register_handlers(application):
     application.add_handler(CallbackQueryHandler(finish_handler, pattern="^(finish_signed|finish_anonymous)$"))
     application.add_handler(CallbackQueryHandler(audit_handler, pattern="^(approve_|reject_).*$"))
     application.add_handler(CallbackQueryHandler(cancel_handler, pattern="^cancel$"))
-    application.add_handler(CallbackQueryHandler(button_handler, pattern="^(help|start|admin_manage|check_follow_|add_tags_|cancel_tags|cancel_reason).*$"))
+    application.add_handler(CallbackQueryHandler(button_handler, pattern="^(help|start|admin_manage|check_follow_|add_tags_|remove_tags_|cancel_tags|cancel_reason).*$"))
     application.add_handler(CallbackQueryHandler(broadcast_callback_handler, pattern="^(confirm_broadcast|cancel_broadcast|preview_broadcast|send_notification|cancel_notification)$")) 
