@@ -751,6 +751,18 @@ def format_user_signature(user):
     else:
         return f"from：{display_name}"
 
+# 频道ID到用户名的缓存
+channel_id_to_username = {}
+
+async def get_channel_username(bot, channel_id):
+    if channel_id in channel_id_to_username:
+        return channel_id_to_username[channel_id]
+    chat = await bot.get_chat(int(channel_id))
+    username = getattr(chat, 'username', None)
+    if username:
+        channel_id_to_username[channel_id] = username
+    return username
+
 # 修改send_group_to_channel支持多频道
 async def send_group_to_channel(grouped, bot, is_anonymous=False, user=None, tags=None):
     channel_ids = get_bound_channels()
@@ -853,13 +865,13 @@ async def send_group_to_channel(grouped, bot, is_anonymous=False, user=None, tag
                         caption = f"{caption}\n\n{tags_text}" if caption else tags_text
                     msg = await bot.send_animation(int(channel_id), item['file_id'], caption=caption if caption else None)
                     first_channel_msg_id = msg.message_id
-                # 获取频道用户名
-                chat = await bot.get_chat(int(channel_id))
-                first_channel_username = getattr(chat, 'username', None)
+                # 获取频道用户名（优化：用缓存）
+                first_channel_username = await get_channel_username(bot, int(channel_id))
                 break  # 只处理第一个item
             else:
                 await send_item_to_chat(item, bot, int(channel_id), is_anonymous=is_anonymous, user=user, tags=tags)
         break  # 只处理第一个频道
+    print(f"频道ID: {channel_ids[0] if channel_ids else None}, 用户名: {first_channel_username}, 消息ID: {first_channel_msg_id}")
     return (channel_ids[0] if channel_ids else None, first_channel_username, first_channel_msg_id)
 
 pending_submissions = {}  # {submission_id: {'user_id':..., 'grouped':..., 'chat_id':..., 'message_id':..., 'admin_msg_ids': {admin_id: msg_id}}}
@@ -931,6 +943,7 @@ async def finish_handler(update: Update, context):
             # 新增：发送"查看"按钮跳转到频道具体消息
             if channel_username and channel_msg_id:
                 jump_url = f"https://t.me/{channel_username}/{channel_msg_id}"
+                print(f"准备发跳转按钮: {jump_url}")
                 jump_keyboard = InlineKeyboardMarkup([
                     [InlineKeyboardButton("查看", url=jump_url)]
                 ])
