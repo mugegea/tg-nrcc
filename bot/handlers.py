@@ -668,7 +668,7 @@ async def finish_handler(update: Update, context):
         
         try:
             # 先发送内容到频道
-            await send_group_to_channel(grouped, context.bot, is_anonymous=is_anonymous, user=user, tags=grouped.get('tags'))
+            await send_group_to_channel(grouped, context.bot, is_anonymous=is_anonymous, user=user, tags=None)
             print(f"🔍 内容已发送到频道")
             
             # 生成 group_id 并存储到数据库
@@ -727,6 +727,7 @@ async def finish_handler(update: Update, context):
                 print(f"🔍 成功发送给管理员 {admin_id}, 消息ID: {msg_id}")
             except Exception as e:
                 print(f"🔍 发送给管理员 {admin_id} 失败: {e}")
+                # 即使发送失败也要继续处理其他管理员
         
         await query.answer()
 
@@ -797,6 +798,10 @@ async def audit_handler(update: Update, context):
         # 处理拒绝并说明原因的情况
         if data.startswith("reject_with_reason_"):
             submission_id = data.split('_', 3)[3]  # 获取submission_id
+            # 检查投稿是否存在
+            if submission_id not in pending_submissions:
+                await query.answer("该投稿已被处理或已过期。", show_alert=True)
+                return
             # 设置等待输入拒绝原因的状态
             rejection_reason_states[admin_id] = {
                 'submission_id': submission_id,
@@ -1744,5 +1749,5 @@ def register_handlers(application):
     application.add_handler(CallbackQueryHandler(finish_handler, pattern="^(finish_signed|finish_anonymous)$"))
     application.add_handler(CallbackQueryHandler(audit_handler, pattern="^(approve_|reject_).*$"))
     application.add_handler(CallbackQueryHandler(cancel_handler, pattern="^cancel$"))
-    application.add_handler(CallbackQueryHandler(button_handler, pattern="^(help|start|admin_manage|check_follow_).*$"))
+    application.add_handler(CallbackQueryHandler(button_handler, pattern="^(help|start|admin_manage|check_follow_|add_tags_|cancel_tags|cancel_reason).*$"))
     application.add_handler(CallbackQueryHandler(broadcast_callback_handler, pattern="^(confirm_broadcast|cancel_broadcast|preview_broadcast|send_notification|cancel_notification)$")) 
