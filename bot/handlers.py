@@ -766,113 +766,103 @@ async def get_channel_username(bot, channel_id):
 # 修改send_group_to_channel支持多频道
 async def send_group_to_channel(grouped, bot, is_anonymous=False, user=None, tags=None):
     channel_ids = get_bound_channels()
-    first_channel_url = None
     first_channel_msg_id = None
     first_channel_username = None
-    for idx, channel_id in enumerate(channel_ids):
+    first_channel_id = channel_ids[0] if channel_ids else None
+    # 只处理第一个绑定频道，获取所有消息的最后一条 message_id
+    if first_channel_id:
+        for idx, item in enumerate(grouped):
+            msg = None
+            if item['type'] == 'media_group':
+                media = []
+                from telegram import InputMediaPhoto, InputMediaVideo
+                for i, m in enumerate(item['items']):
+                    caption = m.get('caption') or ""
+                    if not is_anonymous and user and i == len(item['items']) - 1:
+                        signature = format_user_signature(user)
+                        if signature:
+                            caption = f"{caption}\n\n{signature}" if caption else signature
+                    if tags and i == len(item['items']) - 1:
+                        tags_text = ' '.join(tags)
+                        caption = f"{caption}\n\n{tags_text}" if caption else tags_text
+                    if m['type'] == 'photo':
+                        media.append(InputMediaPhoto(media=m['file_id'], caption=caption))
+                    elif m['type'] == 'video':
+                        media.append(InputMediaVideo(media=m['file_id'], caption=caption))
+                if media:
+                    msgs = await bot.send_media_group(int(first_channel_id), media)
+                    msg = msgs[-1]  # 取最后一条
+            elif item['type'] == 'photo':
+                caption = item.get('caption') or ''
+                if not is_anonymous and user:
+                    signature = format_user_signature(user)
+                    if signature:
+                        caption = f"{caption}\n\n{signature}" if caption else signature
+                if tags:
+                    tags_text = ' '.join(tags)
+                    caption = f"{caption}\n\n{tags_text}" if caption else tags_text
+                msg = await bot.send_photo(int(first_channel_id), item['file_id'], caption=caption if caption else None)
+            elif item['type'] == 'video':
+                caption = item.get('caption') or ''
+                if not is_anonymous and user:
+                    signature = format_user_signature(user)
+                    if signature:
+                        caption = f"{caption}\n\n{signature}" if caption else signature
+                if tags:
+                    tags_text = ' '.join(tags)
+                    caption = f"{caption}\n\n{tags_text}" if caption else tags_text
+                msg = await bot.send_video(int(first_channel_id), item['file_id'], caption=caption if caption else None)
+            elif item['type'] == 'text':
+                text = item['text']
+                if not is_anonymous and user:
+                    signature = format_user_signature(user)
+                    if signature:
+                        text = f"{text}\n\n{signature}"
+                if tags:
+                    tags_text = ' '.join(tags)
+                    text = f"{text}\n\n{tags_text}"
+                msg = await bot.send_message(int(first_channel_id), text)
+            elif item['type'] == 'document':
+                caption = item.get('caption') or ''
+                if not is_anonymous and user:
+                    signature = format_user_signature(user)
+                    if signature:
+                        caption = f"{caption}\n\n{signature}" if caption else signature
+                if tags:
+                    tags_text = ' '.join(tags)
+                    caption = f"{caption}\n\n{tags_text}" if caption else tags_text
+                msg = await bot.send_document(int(first_channel_id), item['file_id'], caption=caption if caption else None, filename=item.get('file_name'))
+            elif item['type'] == 'audio':
+                caption = item.get('caption') or ''
+                if not is_anonymous and user:
+                    signature = format_user_signature(user)
+                    if signature:
+                        caption = f"{caption}\n\n{signature}" if caption else signature
+                if tags:
+                    tags_text = ' '.join(tags)
+                    caption = f"{caption}\n\n{tags_text}" if caption else tags_text
+                msg = await bot.send_audio(int(first_channel_id), item['file_id'], caption=caption if caption else None)
+            elif item['type'] == 'animation':
+                caption = item.get('caption') or ''
+                if not is_anonymous and user:
+                    signature = format_user_signature(user)
+                    if signature:
+                        caption = f"{caption}\n\n{signature}" if caption else signature
+                if tags:
+                    tags_text = ' '.join(tags)
+                    caption = f"{caption}\n\n{tags_text}" if caption else tags_text
+                msg = await bot.send_animation(int(first_channel_id), item['file_id'], caption=caption if caption else None)
+            # 只要有消息就更新 message_id
+            if msg is not None:
+                first_channel_msg_id = msg.message_id
+        # 获取频道用户名（用缓存）
+        first_channel_username = await get_channel_username(bot, int(first_channel_id))
+        print(f"频道ID: {first_channel_id}, 用户名: {first_channel_username}, 消息ID: {first_channel_msg_id}")
+    # 其他频道正常分发
+    for channel_id in channel_ids[1:]:
         for item in grouped:
-            # 只对第一个绑定频道，记录 message_id
-            if idx == 0:
-                # 只处理单条内容或 media_group 的第一个元素
-                # 只支持 text/photo/video/document/audio/animation
-                send_func = None
-                caption = None
-                reply_markup = None
-                if item['type'] == 'media_group':
-                    # 只取最后一个媒体项的 message_id
-                    media = []
-                    from telegram import InputMediaPhoto, InputMediaVideo
-                    for i, m in enumerate(item['items']):
-                        caption = m.get('caption') or ""
-                        if not is_anonymous and user and i == len(item['items']) - 1:
-                            signature = format_user_signature(user)
-                            if signature:
-                                caption = f"{caption}\n\n{signature}" if caption else signature
-                        if tags and i == len(item['items']) - 1:
-                            tags_text = ' '.join(tags)
-                            caption = f"{caption}\n\n{tags_text}" if caption else tags_text
-                        if m['type'] == 'photo':
-                            media.append(InputMediaPhoto(media=m['file_id'], caption=caption))
-                        elif m['type'] == 'video':
-                            media.append(InputMediaVideo(media=m['file_id'], caption=caption))
-                    if media:
-                        msgs = await bot.send_media_group(int(channel_id), media)
-                        # 取最后一条的 message_id
-                        first_channel_msg_id = msgs[-1].message_id
-                elif item['type'] == 'photo':
-                    caption = item.get('caption') or ''
-                    if not is_anonymous and user:
-                        signature = format_user_signature(user)
-                        if signature:
-                            caption = f"{caption}\n\n{signature}" if caption else signature
-                    if tags:
-                        tags_text = ' '.join(tags)
-                        caption = f"{caption}\n\n{tags_text}" if caption else tags_text
-                    msg = await bot.send_photo(int(channel_id), item['file_id'], caption=caption if caption else None)
-                    first_channel_msg_id = msg.message_id
-                elif item['type'] == 'video':
-                    caption = item.get('caption') or ''
-                    if not is_anonymous and user:
-                        signature = format_user_signature(user)
-                        if signature:
-                            caption = f"{caption}\n\n{signature}" if caption else signature
-                    if tags:
-                        tags_text = ' '.join(tags)
-                        caption = f"{caption}\n\n{tags_text}" if caption else tags_text
-                    msg = await bot.send_video(int(channel_id), item['file_id'], caption=caption if caption else None)
-                    first_channel_msg_id = msg.message_id
-                elif item['type'] == 'text':
-                    text = item['text']
-                    if not is_anonymous and user:
-                        signature = format_user_signature(user)
-                        if signature:
-                            text = f"{text}\n\n{signature}"
-                    if tags:
-                        tags_text = ' '.join(tags)
-                        text = f"{text}\n\n{tags_text}"
-                    msg = await bot.send_message(int(channel_id), text)
-                    first_channel_msg_id = msg.message_id
-                elif item['type'] == 'document':
-                    caption = item.get('caption') or ''
-                    if not is_anonymous and user:
-                        signature = format_user_signature(user)
-                        if signature:
-                            caption = f"{caption}\n\n{signature}" if caption else signature
-                    if tags:
-                        tags_text = ' '.join(tags)
-                        caption = f"{caption}\n\n{tags_text}" if caption else tags_text
-                    msg = await bot.send_document(int(channel_id), item['file_id'], caption=caption if caption else None, filename=item.get('file_name'))
-                    first_channel_msg_id = msg.message_id
-                elif item['type'] == 'audio':
-                    caption = item.get('caption') or ''
-                    if not is_anonymous and user:
-                        signature = format_user_signature(user)
-                        if signature:
-                            caption = f"{caption}\n\n{signature}" if caption else signature
-                    if tags:
-                        tags_text = ' '.join(tags)
-                        caption = f"{caption}\n\n{tags_text}" if caption else tags_text
-                    msg = await bot.send_audio(int(channel_id), item['file_id'], caption=caption if caption else None)
-                    first_channel_msg_id = msg.message_id
-                elif item['type'] == 'animation':
-                    caption = item.get('caption') or ''
-                    if not is_anonymous and user:
-                        signature = format_user_signature(user)
-                        if signature:
-                            caption = f"{caption}\n\n{signature}" if caption else signature
-                    if tags:
-                        tags_text = ' '.join(tags)
-                        caption = f"{caption}\n\n{tags_text}" if caption else tags_text
-                    msg = await bot.send_animation(int(channel_id), item['file_id'], caption=caption if caption else None)
-                    first_channel_msg_id = msg.message_id
-                # 获取频道用户名（优化：用缓存）
-                first_channel_username = await get_channel_username(bot, int(channel_id))
-                break  # 只处理第一个item
-            else:
-                await send_item_to_chat(item, bot, int(channel_id), is_anonymous=is_anonymous, user=user, tags=tags)
-        break  # 只处理第一个频道
-    print(f"频道ID: {channel_ids[0] if channel_ids else None}, 用户名: {first_channel_username}, 消息ID: {first_channel_msg_id}")
-    return (channel_ids[0] if channel_ids else None, first_channel_username, first_channel_msg_id)
+            await send_item_to_chat(item, bot, int(channel_id), is_anonymous=is_anonymous, user=user, tags=tags)
+    return (first_channel_id, first_channel_username, first_channel_msg_id)
 
 pending_submissions = {}  # {submission_id: {'user_id':..., 'grouped':..., 'chat_id':..., 'message_id':..., 'admin_msg_ids': {admin_id: msg_id}}}
 
