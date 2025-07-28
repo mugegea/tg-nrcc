@@ -420,7 +420,7 @@ async def button_handler(update: Update, context):
             f"• 空格分隔：美食 新闻 科技\n"
             f"• 逗号分隔：美食,新闻,科技\n"
             f"• 自动添加#：输入'美食'会自动变成'#美食'\n\n"
-            f"请直接发送标签，发送 /cancel_tags 可取消操作。",
+            f"请直接发送标签，点击下方按钮可取消操作。",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("❌ 取消", callback_data="cancel_tags")]
             ])
@@ -475,6 +475,68 @@ async def button_handler(update: Update, context):
         else:
             await query.edit_message_text("❌ 当前没有等待输入的标签。")
         await query.answer()
+    elif query.data.startswith("remove_tags_"):
+        # 处理移除标签
+        user_id = query.from_user.id
+        admin_ids = load_admin_ids()
+        if user_id not in admin_ids:
+            await query.answer("无权限，仅管理员可用。", show_alert=True)
+            return
+        
+        submission_id = query.data.split('_', 2)[2]
+        
+        # 获取投稿信息
+        submission = pending_submissions.get(submission_id, None)
+        if not submission:
+            await query.answer("❌ 该投稿已被处理或已过期。", show_alert=True)
+            return
+        
+        # 移除标签
+        if 'tags' in submission:
+            removed_tags = submission.pop('tags', [])
+            tags_text = ' '.join(removed_tags) if removed_tags else "无"
+        else:
+            tags_text = "无"
+        
+        # 重新显示审核界面
+        grouped = submission['grouped']
+        user_id_target = submission['user_id']
+        is_anonymous = submission.get('is_anonymous', False)
+        
+        # 获取用户信息
+        user = await context.bot.get_chat(user_id_target)
+        user_display = f'@{user.username}' if user.username else f"ID:{user_id_target}"
+        anonymous_status = "匿名投稿" if is_anonymous else "署名投稿"
+        
+        review_text = f"\u2728 <b>投稿审核</b>\n用户: {user_display}\n类型: {anonymous_status}\n\n请审核以下内容："
+        
+        reply_markup = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ 通过", callback_data=f"approve_{submission_id}"),
+                InlineKeyboardButton("❌ 拒绝", callback_data=f"reject_{submission_id}")
+            ],
+            [
+                InlineKeyboardButton("❌ 拒绝并说明原因", callback_data=f"reject_with_reason_{submission_id}")
+            ],
+            [
+                InlineKeyboardButton("🏷️ 添加标签", callback_data=f"add_tags_{submission_id}")
+            ],
+            [
+                InlineKeyboardButton("🗑️ 移除标签", callback_data=f"remove_tags_{submission_id}")
+            ]
+        ])
+        
+        await query.edit_message_text(
+            text=review_text,
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+        
+        # 重新发送内容（不带标签）
+        for item in grouped:
+            await send_item_to_chat(item, context.bot, user_id, is_anonymous=is_anonymous, user=user)
+        
+        await query.answer(f"✅ 已移除标签：{tags_text}")
     elif query.data.startswith("check_follow_"):
         # 处理重新检查关注状态
         payload = query.data.replace("check_follow_", "")
@@ -835,6 +897,9 @@ async def send_group_to_admin_for_review(grouped, bot, admin_id, submission_id, 
         ],
         [
             InlineKeyboardButton("🏷️ 添加标签", callback_data=f"add_tags_{submission_id}")
+        ],
+        [
+            InlineKeyboardButton("🗑️ 移除标签", callback_data=f"remove_tags_{submission_id}")
         ]
     ])
     try:
@@ -1091,6 +1156,9 @@ async def handle_tag_input(update: Update, context):
         ],
         [
             InlineKeyboardButton("🏷️ 修改标签", callback_data=f"add_tags_{submission_id}")
+        ],
+        [
+            InlineKeyboardButton("🗑️ 移除标签", callback_data=f"remove_tags_{submission_id}")
         ]
     ])
     
@@ -1853,7 +1921,6 @@ def register_handlers(application):
     application.add_handler(CommandHandler("broadcast", broadcast_handler))
     application.add_handler(CommandHandler("qbzhiling", qbzhiling_handler))
     application.add_handler(CommandHandler("cancel_reason", cancel_reason_handler))
-    application.add_handler(CommandHandler("cancel_tags", cancel_tags_handler))
     
     # 使用单个MessageHandler处理所有消息
     application.add_handler(MessageHandler(filters.ALL, content_handler))
