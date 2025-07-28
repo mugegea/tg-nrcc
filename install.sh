@@ -15,11 +15,6 @@ FOLLOW_STATS_PATH = os.path.join(os.path.dirname(__file__), '..', 'storage', 'fo
 USERS_PATH = os.path.join(os.path.dirname(__file__), '..', 'storage', 'users.json')
 BROADCAST_HISTORY_PATH = os.path.join(os.path.dirname(__file__), '..', 'storage', 'broadcast_history.json')
 
-# 静态频道ID到用户名映射（优先使用）
-channel_id_to_username = {
-    "-1002713959876": "quweibb"
-}
-
 # 用户管理功能
 def get_users():
     """获取所有用户列表"""
@@ -271,14 +266,14 @@ async def start_handler(update: Update, context):
             await update.message.reply_text("资源未找到或链接已失效。")
     else:
         await update.message.reply_text(
-            f"欢迎！请发送任意内容，发送多条后点击下方"完成"按钮，我会帮你生成访问链接并备份到频道。\n\n{get_intro()}"
+            f"欢迎！请发送任意内容，发送多条后点击下方“完成”按钮，我会帮你生成访问链接并备份到频道。\n\n{get_intro()}"
         )
 
 async def help_handler(update: Update, context):
     help_text = (
         "【功能说明】\n"
         "- 支持任意内容（文本、图片、视频等）发送给机器人，生成唯一访问链接\n"
-        "- 多条内容合并为一个链接，点击"完成"后生成\n"
+        "- 多条内容合并为一个链接，点击“完成”后生成\n"
         "- 所有内容自动备份到频道\n"
         "- 链接可分享，其他用户点击后机器人自动发送原内容\n"
         "\n【指令列表】\n"
@@ -286,7 +281,7 @@ async def help_handler(update: Update, context):
         "/help - 显示帮助和功能说明\n"
         "/intro - 查看机器人介绍\n"
         "/setintro <内容> - 设置机器人介绍（仅管理员）\n"
-        "发送内容+点击"完成" - 生成合并内容的访问链接"
+        "发送内容+点击“完成” - 生成合并内容的访问链接"
     )
     await update.message.reply_text(help_text)
 
@@ -1935,198 +1930,3 @@ def register_handlers(application):
     
     # 使用MessageHandler处理非命令消息（放在最后，避免拦截命令）
     application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, content_handler)) 
-
-# 频道ID到用户名的缓存（内存+持久化）
-channel_id_to_username = {}
-CHANNEL_USERNAME_PATH = os.path.join('storage', 'channel_usernames.json')
-
-def load_channel_usernames():
-    global channel_id_to_username
-    if os.path.exists(CHANNEL_USERNAME_PATH):
-        try:
-            with open(CHANNEL_USERNAME_PATH, 'r', encoding='utf-8') as f:
-                channel_id_to_username = json.load(f)
-        except Exception as e:
-            print(f"加载频道用户名映射失败: {e}")
-            channel_id_to_username = {}
-    else:
-        channel_id_to_username = {}
-
-def save_channel_usernames():
-    try:
-        with open(CHANNEL_USERNAME_PATH, 'w', encoding='utf-8') as f:
-            json.dump(channel_id_to_username, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"保存频道用户名映射失败: {e}")
-
-async def bindchannelusername_handler(update, context):
-    user_id = update.effective_user.id
-    admin_ids = load_admin_ids()
-    if user_id not in admin_ids:
-        await update.message.reply_text("无权限，仅管理员可用。")
-        return
-    if len(context.args) != 2:
-        await update.message.reply_text("用法：/bindchannelusername <频道ID> <用户名>\n如：/bindchannelusername -100xxxx yourchannel")
-        return
-    channel_id, username = context.args
-    if not channel_id.startswith('-100') or not username.isalnum():
-        await update.message.reply_text("频道ID格式或用户名格式不正确。")
-        return
-    load_channel_usernames()
-    channel_id_to_username[channel_id] = username
-    save_channel_usernames()
-    await update.message.reply_text(f"已绑定频道ID {channel_id} 到用户名 @{username}")
-
-async def get_channel_username(bot, channel_id):
-    load_channel_usernames()
-    cid = str(channel_id)
-    if cid in channel_id_to_username:
-        return channel_id_to_username[cid]
-    # 兜底自动获取
-    chat = await bot.get_chat(int(channel_id))
-    username = getattr(chat, 'username', None)
-    if username:
-        channel_id_to_username[cid] = username
-        save_channel_usernames()
-    return username
-
-# 修改send_group_to_channel，返回第一个频道的用户名和最后一条消息ID
-async def send_group_to_channel(grouped, bot, is_anonymous=False, user=None, tags=None):
-    channel_ids = get_bound_channels()
-    first_channel_id = channel_ids[0] if channel_ids else None
-    first_channel_msg_id = None
-    first_channel_username = None
-    if first_channel_id:
-        for idx, item in enumerate(grouped):
-            msg = None
-            if item['type'] == 'media_group':
-                media = []
-                from telegram import InputMediaPhoto, InputMediaVideo
-                for i, m in enumerate(item['items']):
-                    caption = m.get('caption') or ""
-                    if not is_anonymous and user and i == len(item['items']) - 1:
-                        signature = format_user_signature(user)
-                        if signature:
-                            caption = f"{caption}\n\n{signature}" if caption else signature
-                    if tags and i == len(item['items']) - 1:
-                        tags_text = ' '.join(tags)
-                        caption = f"{caption}\n\n{tags_text}" if caption else tags_text
-                    if m['type'] == 'photo':
-                        media.append(InputMediaPhoto(media=m['file_id'], caption=caption))
-                    elif m['type'] == 'video':
-                        media.append(InputMediaVideo(media=m['file_id'], caption=caption))
-                if media:
-                    msgs = await bot.send_media_group(int(first_channel_id), media)
-                    msg = msgs[-1]
-            elif item['type'] == 'photo':
-                caption = item.get('caption') or ''
-                if not is_anonymous and user:
-                    signature = format_user_signature(user)
-                    if signature:
-                        caption = f"{caption}\n\n{signature}" if caption else signature
-                if tags:
-                    tags_text = ' '.join(tags)
-                    caption = f"{caption}\n\n{tags_text}" if caption else tags_text
-                msg = await bot.send_photo(int(first_channel_id), item['file_id'], caption=caption if caption else None)
-            elif item['type'] == 'video':
-                caption = item.get('caption') or ''
-                if not is_anonymous and user:
-                    signature = format_user_signature(user)
-                    if signature:
-                        caption = f"{caption}\n\n{signature}" if caption else signature
-                if tags:
-                    tags_text = ' '.join(tags)
-                    caption = f"{caption}\n\n{tags_text}" if caption else tags_text
-                msg = await bot.send_video(int(first_channel_id), item['file_id'], caption=caption if caption else None)
-            elif item['type'] == 'text':
-                text = item['text']
-                if not is_anonymous and user:
-                    signature = format_user_signature(user)
-                    if signature:
-                        text = f"{text}\n\n{signature}"
-                if tags:
-                    tags_text = ' '.join(tags)
-                    text = f"{text}\n\n{tags_text}"
-                msg = await bot.send_message(int(first_channel_id), text)
-            elif item['type'] == 'document':
-                caption = item.get('caption') or ''
-                if not is_anonymous and user:
-                    signature = format_user_signature(user)
-                    if signature:
-                        caption = f"{caption}\n\n{signature}" if caption else signature
-                if tags:
-                    tags_text = ' '.join(tags)
-                    caption = f"{caption}\n\n{tags_text}" if caption else tags_text
-                msg = await bot.send_document(int(first_channel_id), item['file_id'], caption=caption if caption else None, filename=item.get('file_name'))
-            elif item['type'] == 'audio':
-                caption = item.get('caption') or ''
-                if not is_anonymous and user:
-                    signature = format_user_signature(user)
-                    if signature:
-                        caption = f"{caption}\n\n{signature}" if caption else signature
-                if tags:
-                    tags_text = ' '.join(tags)
-                    caption = f"{caption}\n\n{tags_text}" if caption else tags_text
-                msg = await bot.send_audio(int(first_channel_id), item['file_id'], caption=caption if caption else None)
-            elif item['type'] == 'animation':
-                caption = item.get('caption') or ''
-                if not is_anonymous and user:
-                    signature = format_user_signature(user)
-                    if signature:
-                        caption = f"{caption}\n\n{signature}" if caption else signature
-                if tags:
-                    tags_text = ' '.join(tags)
-                    caption = f"{caption}\n\n{tags_text}" if caption else tags_text
-                msg = await bot.send_animation(int(first_channel_id), item['file_id'], caption=caption if caption else None)
-            if msg is not None:
-                first_channel_msg_id = msg.message_id
-        first_channel_username = await get_channel_username(bot, int(first_channel_id))
-    for channel_id in channel_ids[1:]:
-        for item in grouped:
-            await send_item_to_chat(item, bot, int(channel_id), is_anonymous=is_anonymous, user=user, tags=tags)
-    return (first_channel_id, first_channel_username, first_channel_msg_id)
-
-# 修改 finish_handler，投稿通过后给投稿人发送跳转按钮
-# ... existing code ...
-    if user_id in admin_ids:
-        await query.edit_message_text("正在上传并生成链接，请稍候…")
-        print(f"🔍 finish_handler - 管理员投稿，用户ID: {user_id}")
-        print(f"🔍 内容数量: {len(grouped)}")
-        try:
-            channel_id, channel_username, channel_msg_id = await send_group_to_channel(grouped, context.bot, is_anonymous=is_anonymous, user=user, tags=None)
-            print(f"🔍 内容已发送到频道")
-            from backend.utils import generate_group_id, store_group_mapping
-            group_id = generate_group_id()
-            print(f"🔍 生成的group_id: {group_id}")
-            store_group_mapping(group_id, grouped)
-            print(f"🔍 内容已存储到数据库")
-            link = generate_link(group_id)
-            print(f"🔍 生成的链接: {link}")
-            if link.startswith("⚠️"):
-                await context.bot.send_message(chat_id=query.message.chat_id, text=f"✅ 内容已上传到频道\n{link}")
-            else:
-                keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("点击访问内容", url=link)]
-                ])
-                await context.bot.send_message(chat_id=query.message.chat_id, text=f"✅ 链接已生成 👇\n{link}", reply_markup=keyboard)
-            await send_link_to_backup_channels(link, context.bot)
-            print(f"🔍 链接已发送给用户和备份频道")
-            # 新增：发送"查看"按钮跳转到频道具体消息
-            if channel_username and channel_msg_id:
-                jump_url = f"https://t.me/{channel_username}/{channel_msg_id}"
-                print(f"准备发跳转按钮: {jump_url}")
-                jump_keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("查看", url=jump_url)]
-                ])
-                await context.bot.send_message(chat_id=query.message.chat_id, text="🎉 您的投稿已发布到频道，感谢您的贡献！", reply_markup=jump_keyboard)
-            elif channel_msg_id:
-                await context.bot.send_message(chat_id=query.message.chat_id, text="🎉 您的投稿已发布到频道，但频道未绑定用户名，请管理员用 /bindchannelusername 绑定。")
-        except Exception as e:
-            print(f"🔍 finish_handler 错误: {e}")
-            await query.edit_message_text(f"❌ 生成链接时出现错误: {str(e)}")
-        await query.answer()
-// ... existing code ...
-# 在 register_handlers(application) 里注册新命令
-// ... existing code ...
-    application.add_handler(CommandHandler("bindchannelusername", bindchannelusername_handler))
-// ... existing code ...
