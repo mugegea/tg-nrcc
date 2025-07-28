@@ -346,6 +346,15 @@ async def button_handler(update: Update, context):
         await query.answer()
     elif query.data in ["finish_signed", "finish_anonymous"]:
         await finish_handler(update, context)
+    elif query.data == "cancel_reason":
+        # 取消拒绝原因输入
+        user_id = query.from_user.id
+        if user_id in rejection_reason_states:
+            del rejection_reason_states[user_id]
+            await query.edit_message_text("✅ 已取消拒绝原因输入。")
+        else:
+            await query.edit_message_text("❌ 当前没有等待输入的拒绝原因。")
+        await query.answer()
     elif query.data.startswith("check_follow_"):
         # 处理重新检查关注状态
         payload = query.data.replace("check_follow_", "")
@@ -394,6 +403,12 @@ async def content_handler(update: Update, context):
             print(f"🔍 管理员在广播模式中，处理广播内容")
             # 处理广播内容
             await handle_broadcast_content(update, context)
+            return
+        
+        # 检查是否是管理员在输入拒绝原因
+        if user_id in admin_ids and user_id in rejection_reason_states and rejection_reason_states[user_id].get('waiting_for_reason'):
+            print(f"🔍 管理员在输入拒绝原因")
+            await handle_rejection_reason(update, context)
             return
         
         print(f"🔍 content_handler 开始处理普通内容")
@@ -557,6 +572,9 @@ async def send_group_to_channel(grouped, bot, is_anonymous=False, user=None):
 
 pending_submissions = {}  # {submission_id: {'user_id':..., 'grouped':..., 'chat_id':..., 'message_id':..., 'admin_msg_ids': {admin_id: msg_id}}}
 
+# 拒绝原因输入状态管理
+rejection_reason_states = {}  # {admin_id: {'submission_id': ..., 'waiting_for_reason': True}}
+
 async def finish_handler(update: Update, context):
     query = update.callback_query
     user_id = query.from_user.id
@@ -662,6 +680,9 @@ async def send_group_to_admin_for_review(grouped, bot, admin_id, submission_id, 
         [
             InlineKeyboardButton("✅ 通过", callback_data=f"approve_{submission_id}"),
             InlineKeyboardButton("❌ 拒绝", callback_data=f"reject_{submission_id}")
+        ],
+        [
+            InlineKeyboardButton("❌ 拒绝并说明原因", callback_data=f"reject_with_reason_{submission_id}")
         ]
     ])
     sent = await bot.send_message(chat_id=admin_id, text=review_text, reply_markup=reply_markup, parse_mode='HTML')
@@ -689,6 +710,25 @@ async def audit_handler(update: Update, context):
         action = '通过' if data.startswith("approve_") else '拒绝'
         emoji = '✅' if action == '通过' else '❌'
         submission_id = data.split('_', 1)[1]
+        
+        # 处理拒绝并说明原因的情况
+        if data.startswith("reject_with_reason_"):
+            submission_id = data.split('_', 3)[3]  # 获取submission_id
+            # 设置等待输入拒绝原因的状态
+            rejection_reason_states[admin_id] = {
+                'submission_id': submission_id,
+                'waiting_for_reason': True
+            }
+            await query.edit_message_text(
+                f"📝 请输入拒绝原因：\n\n"
+                f"请直接发送拒绝原因，我将转发给用户。\n"
+                f"发送 /cancel_reason 可取消操作。",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("❌ 取消", callback_data="cancel_reason")]
+                ])
+            )
+            await query.answer()
+            return
         submission = pending_submissions.pop(submission_id, None)
         if not submission:
             await query.answer("该内容已被其他管理员审核。", show_alert=True)
@@ -728,6 +768,83 @@ async def audit_handler(update: Update, context):
             await context.bot.send_message(chat_id=chat_id, text="很抱歉，你的内容未通过管理员审核。")
             await context.bot.send_message(chat_id=admin_id, text="已拒绝该内容。")
             await query.answer("已拒绝")
+
+async def handle_rejection_reason(update: Update, context):
+    """处理管理员输入的拒绝原因"""
+    user_id = update.effective_user.id
+    admin_ids = load_admin_ids()
+    
+    if user_id not in admin_ids:
+        return
+    
+    # 检查是否在等待输入拒绝原因的状态
+    if user_id not in rejection_reason_states or not rejection_reason_states[user_id].get('waiting_for_reason'):
+        return
+    
+    submission_id = rejection_reason_states[user_id]['submission_id']
+    rejection_reason = update.message.text
+    
+    # 获取投稿信息
+    submission = pending_submissions.pop(submission_id, None)
+    if not submission:
+        await update.message.reply_text("❌ 该投稿已被其他管理员处理或已过期。")
+        # 清除状态
+        if user_id in rejection_reason_states:
+            del rejection_reason_states[user_id]
+        return
+    
+    user_id_target = submission['user_id']
+    chat_id = submission['chat_id']
+    admin_msg_ids = submission.get('admin_msg_ids', {})
+    
+    # 获取管理员信息
+    admin_user = await context.bot.get_chat(user_id)
+    admin_username = admin_user.username if hasattr(admin_user, 'username') and admin_user.username else None
+    if admin_username:
+        admin_display = f"@{admin_username} (ID:{user_id})"
+    else:
+        admin_display = f"ID:{user_id}"
+    
+    # 通知所有管理员，按钮变为状态提示
+    for aid, msg_id in admin_msg_ids.items():
+        try:
+            await context.bot.edit_message_text(
+                chat_id=aid,
+                message_id=msg_id,
+                text=f"❌ <b>该投稿已被管理员 {admin_display} 拒绝并说明原因</b>",
+                parse_mode='HTML'
+            )
+        except Exception:
+            pass
+    
+    # 发送拒绝消息给用户
+    rejection_message = (
+        f"❌ 很抱歉，你的内容未通过管理员审核。\n\n"
+        f"📝 <b>拒绝原因：</b>\n{rejection_reason}\n\n"
+        f"💡 如有疑问，请联系管理员。"
+    )
+    
+    await context.bot.send_message(
+        chat_id=chat_id, 
+        text=rejection_message,
+        parse_mode='HTML'
+    )
+    
+    # 通知管理员
+    await context.bot.send_message(
+        chat_id=user_id, 
+        text=f"✅ 已拒绝该内容并发送拒绝原因给用户。"
+    )
+    
+    # 清除状态
+    if user_id in rejection_reason_states:
+        del rejection_reason_states[user_id]
+    
+    # 删除管理员的输入消息
+    try:
+        await update.message.delete()
+    except:
+        pass
 
 # 序列化所有主流类型
 
@@ -947,6 +1064,21 @@ COMMAND_DESCRIPTIONS = {
     '/broadcast': '广播消息和通知给所有用户（仅管理员）',
     '/qbzhiling': '显示所有机器人指令及其描述',
 }
+
+async def cancel_reason_handler(update, context):
+    """取消拒绝原因输入"""
+    user_id = update.effective_user.id
+    admin_ids = load_admin_ids()
+    
+    if user_id not in admin_ids:
+        await update.message.reply_text("无权限，仅管理员可用。")
+        return
+    
+    if user_id in rejection_reason_states:
+        del rejection_reason_states[user_id]
+        await update.message.reply_text("✅ 已取消拒绝原因输入。")
+    else:
+        await update.message.reply_text("❌ 当前没有等待输入的拒绝原因。")
 
 async def qbzhiling_handler(update, context):
     text = '【机器人指令列表】\n'
@@ -1394,6 +1526,7 @@ def register_handlers(application):
     application.add_handler(CommandHandler("forcefollow", forcefollow_handler))
     application.add_handler(CommandHandler("broadcast", broadcast_handler))
     application.add_handler(CommandHandler("qbzhiling", qbzhiling_handler))
+    application.add_handler(CommandHandler("cancel_reason", cancel_reason_handler))
     
     # 使用单个MessageHandler处理所有消息
     application.add_handler(MessageHandler(filters.ALL, content_handler))
